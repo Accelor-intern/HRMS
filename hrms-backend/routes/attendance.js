@@ -8,6 +8,7 @@ import Notification from '../models/Notification.js';
 import auth from '../middleware/auth.js';
 import role from '../middleware/role.js';
 import XLSX from 'xlsx';
+import RawPunchlog from '../models/RawPunchlog.js';
 const router = express.Router();
 
 router.get('/', auth, async (req, res) => {
@@ -465,6 +466,38 @@ router.get('/download', auth, async (req, res) => {
   } catch (err) {
     console.error('Error generating Excel:', err);
     res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
+
+router.post('/test', auth, async (req, res) => {
+  try {
+    const {
+      
+      UserID,
+      LogDate,
+     LogTime,
+      Direction,
+      processed,
+      
+    } = req.body;
+
+    const newAttendance = new RawPunchlog({
+     UserID,
+      LogDate,
+     LogTime,
+      Direction,
+      processed,
+    });
+
+    const savedAttendance = await newAttendance.save();
+    res.status(201).json({
+      message: 'Attendance record saved successfully',
+      data: savedAttendance,
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server Error' });
   }
 });
 

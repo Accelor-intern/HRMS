@@ -5,6 +5,9 @@ import Employee from '../models/Employee.js';
 import SyncMetadata from '../models/SyncMetadata.js';
 import Leave from '../models/Leave.js';
 
+
+let direction = true;
+
 const syncAttendance = async () => {
   try {
     // Step 1: Check if RawPunchlog is empty and initialize lastSyncedAt
@@ -47,7 +50,6 @@ const syncAttendance = async () => {
       );
       return;
     }
-
     // Step 3: Normalize and deduplicate logs
     let punchLogs = records.map((log) => {
       let logTime = log.LogTime;
@@ -63,12 +65,12 @@ const syncAttendance = async () => {
         console.warn(`⚠️ Invalid LogTime format for UserID: ${log.UserID}`, log.LogTime);
         return null;
       }
-
+      
       return {
         UserID: log.UserID?.toString().trim(),
         LogDate: new Date(new Date(log.LogDate).toLocaleString('en-US', { timeZone: 'Asia/Kolkata' })),
         LogTime: logTime,
-        Direction: (log.Direction || 'out').toLowerCase(),
+        Direction: log.Direction ? log.Direction.toLowerCase(): (Direction != Direction) ? 'in': 'out',
         processed: false,
       };
     }).filter((log) => log && log.UserID && log.LogTime && !isNaN(log.LogDate));
