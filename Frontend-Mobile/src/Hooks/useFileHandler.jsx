@@ -1,95 +1,77 @@
 import { useState, useCallback } from 'react';
-import { fetchFileAsBlob, openFile } from '../services/api';
 import { Alert, Platform } from 'react-native';
 import * as FileSystem from 'expo-file-system';
+import { fetchFileAsBlob, openFile } from '../services/api';
 
-/**
- * Hook to manage file download and opening/viewing.
- * @param {string} fileId - ID of the file to fetch
- * @param {string} fileName - Name of the file including extension
- */
-export const useFileHandler = (fileId, fileName) => {
-  const [error, setError] = useState(null);
+export const useFileHandler = ({ fileId, fileName, localFile }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [isImageViewerVisible, setIsImageViewerVisible] = useState(false);
   const [imageUri, setImageUri] = useState(null);
 
-  // Check if the file is an image based on its extension
   const isImageFile = useCallback((filename) => {
     if (!filename) return false;
     const ext = filename.split('.').pop().toLowerCase();
-    return ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp'].includes(ext);
+    return ['jpg', 'jpeg'].includes(ext);
   }, []);
 
   const handleViewFile = useCallback(async () => {
-    if (!fileId || !fileName) {
-      Alert.alert('Error', 'File information is missing');
-      return;
-    }
-
     setIsLoading(true);
-    setError(null);
 
     try {
-      const path = await fetchFileAsBlob(fileId, fileName);
+      let path;
 
-      // Check file integrity
-      const fileInfo = await FileSystem.getInfoAsync(path);
-      if (!fileInfo.exists || fileInfo.size === 0) {
-        throw new Error('Downloaded file is empty or invalid');
-      }
-
-      // Handle image file rendering
-      if (isImageFile(fileName)) {
-        let uri = path;
-        try {
-          if (Platform.OS === 'android') {
-            uri = await FileSystem.getContentUriAsync(path);
-          }
-
-          // Instead of fetching the file, just check if it exists and has content
-          const fileInfo = await FileSystem.getInfoAsync(path);
-          if (!fileInfo.exists || fileInfo.size === 0) {
-            throw new Error('Image file is empty or invalid');
-          }
-
-          // Set the URI and show the image viewer
-          setImageUri(uri);
-          setIsImageViewerVisible(true);
-          return;
-        } catch (imgError) {
-          console.error('Error preparing image:', imgError);
-          // If we can't prepare the image, try opening it as a regular file
-          console.log('Falling back to regular file opening');
-          const result = await openFile(path);
-          if (!result.success && !result.isImage) {
-            throw new Error('Failed to open image file');
-          }
-          return;
+      // Handle local file if provided (from documentUploader.jsx or ImagePicker.js)
+      if (localFile && localFile.uri) {
+        path = localFile.uri;
+        // Verify local file exists
+        const fileInfo = await FileSystem.getInfoAsync(path);
+        if (!fileInfo.exists || fileInfo.size === 0) {
+          throw new Error('Local file is empty or invalid');
         }
+      } else if (fileId && fileName) {
+        // Handle server-fetched file
+        path = await fetchFileAsBlob(fileId, fileName);
+        // Verify downloaded file
+        const fileInfo = await FileSystem.getInfoAsync(path);
+        if (!fileInfo.exists || fileInfo.size === 0) {
+          throw new Error('Downloaded file is empty or invalid');
+        }
+      } else {
+        throw new Error('File information is missing');
       }
 
-      // Non-image file (PDF, DOCX, etc.)
-      const result = await openFile(path);
-      if (!result.success && !result.isImage) {
-        throw new Error('Failed to open file');
+      // Handle image file rendering (jpg/jpeg)
+      if (isImageFile(localFile?.name || fileName)) {
+        let uri = path;
+        if (Platform.OS === 'android') {
+          uri = await FileSystem.getContentUriAsync(path);
+        }
+        setImageUri(uri);
+        setIsImageViewerVisible(true);
+        return;
       }
+
+      // Handle PDF files
+      if ((localFile?.name || fileName)?.toLowerCase().endsWith('.pdf')) {
+        await openFile(path);
+        return;
+      }
+
+      throw new Error('Unsupported file type');
     } catch (err) {
       console.error('Error handling file:', {
         fileId,
         fileName,
+        localFile,
         error: err.message,
-        stack: err.stack,
       });
-      setError(err.message || 'Failed to open file');
       Alert.alert('Error', err.message || 'Could not open the file.');
     } finally {
       setIsLoading(false);
     }
-  }, [fileId, fileName, isImageFile]);
+  }, [fileId, fileName, localFile, isImageFile]);
 
   return {
-    error,
     isLoading,
     handleViewFile,
     isImageViewerVisible,

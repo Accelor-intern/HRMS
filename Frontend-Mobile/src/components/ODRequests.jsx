@@ -73,11 +73,11 @@ const ODRequests = ({ navigation }) => {
         }
     }, [user]);
 
-    const getFinalStatus = (status, loginType) => {
+    const getFinalStatus = (status) => {
         if (!status) return 'Pending';
         if (status.hod === 'Rejected' || status.ceo === 'Rejected') return 'Rejected';
         if (status.ceo === 'Approved') return 'Approved';
-        if (status.hod === 'Approved') return loginType === 'HOD' ? 'Pending' : 'Approved by HOD';
+        if (status.hod === 'Approved') return 'Approved by HOD';
         return 'Pending';
       };
       
@@ -196,7 +196,7 @@ const ODRequests = ({ navigation }) => {
                                 [...odRequests].map((odRequest) => {
                                     let dateOut = odRequest.dateOut ? new Date(odRequest.dateOut) : null;
                                     let dateIn = odRequest.dateIn ? new Date(odRequest.dateIn) : null;
-                                    const status = getFinalStatus(odRequest.status, user.loginType);
+                                    const status = getFinalStatus(odRequest.status);
 
                                     return (
                                         <View style={styles.row} key={odRequest._id}>

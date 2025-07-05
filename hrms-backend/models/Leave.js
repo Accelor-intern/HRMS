@@ -23,7 +23,7 @@ const leaveSchema = new mongoose.Schema({
     required: true
   },
 
-  fullDay: {
+  dates: {
     from: { type: Date, required: true },
     to: { type: Date },
     fromDuration: { type: String, enum: ['full', 'half'], default: 'full' },
@@ -41,6 +41,7 @@ const leaveSchema = new mongoose.Schema({
   projectDetails: { type: String },
   restrictedHoliday: { type: String },
   medicalCertificate: { type: mongoose.Schema.Types.ObjectId, ref: 'Uploads.files', default: null },
+  supportingDocuments: { type: mongoose.Schema.Types.ObjectId, ref: 'Uploads.files', default: null },
 
   status: {
     hod: { type: String, enum: ['Pending', 'Approved', 'Submitted', 'Rejected'], default: 'Pending' },

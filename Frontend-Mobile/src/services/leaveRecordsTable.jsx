@@ -1,4 +1,4 @@
-import React, { useContext, useCallback } from 'react';
+import React, { useContext, useCallback, useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
 import { Portal, Modal, Button } from 'react-native-paper';
 import { AuthContext } from '../context/AuthContext';
@@ -22,8 +22,8 @@ const getStatusColor = (status) => {
 
 const LeaveRecordsTable = React.memo(({ leaveRecords, selectedRecord, setSelectedRecord, modalVisible, setModalVisible }) => {
   const { user } = useContext(AuthContext);
+  const [currentFile, setCurrentFile] = useState(null);
   
-  // Initialize useFileHandler with fileId and fileName
   const { 
     handleViewFile, 
     error: fileError, 
@@ -31,19 +31,28 @@ const LeaveRecordsTable = React.memo(({ leaveRecords, selectedRecord, setSelecte
     setIsImageViewerVisible, 
     imageUri,
     isLoading: isFileLoading
-  } = useFileHandler(
-    selectedRecord?.medicalCertificate?._id,
-    selectedRecord?.medicalCertificate?.filename
-  );
+  } = useFileHandler({
+    fileId: currentFile?._id,
+    fileName: currentFile?.filename,
+    localFile: null
+  });
 
-  // Handle view file button press
-  const onViewFile = useCallback(async () => {
-    if (selectedRecord?.medicalCertificate?._id) {
-      await handleViewFile();
+  // Trigger file viewing when currentFile changes
+  useEffect(() => {
+    if (currentFile) {
+      handleViewFile();
     }
-  }, [handleViewFile, selectedRecord]);
+  }, [currentFile, handleViewFile]);
+
+  const onViewFile = useCallback((type) => {
+    if (type === 'medical' && selectedRecord?.medicalCertificate?._id) {
+      setCurrentFile(selectedRecord.medicalCertificate);
+    }
+    if (type === 'supporting' && selectedRecord?.supportingDocuments?._id) {
+      setCurrentFile(selectedRecord.supportingDocuments);
+    }
+  }, [selectedRecord]);
   
-  // Filter records to only show those belonging to the current user
   const userRecords = React.useMemo(() => {
     if (!user) return [];
     const userId = user._id || user.id;
@@ -70,33 +79,27 @@ const LeaveRecordsTable = React.memo(({ leaveRecords, selectedRecord, setSelecte
           </View>
           {Array.isArray(userRecords) ? (
             [...userRecords].map((record) => {
-              let fromDate = null;
-              let toDate = null;
-              let date = null;
-              if (!record.halfDay) {
-                fromDate = record.fullDay.from ? new Date(record.fullDay.from) : null;
-                toDate = record.fullDay.to ? new Date(record.fullDay.to) : null;
-              } else {
-                date = record.halfDay.date ? new Date(record.halfDay.date) : null;
-              }
-              const leaveType = record.leaveType;
+              const fromDate = record.dates?.from ? new Date(record.dates.from) : null;
+              const toDate = record.dates?.to ? new Date(record.dates.to) : null;
+              const isHalfDay = record.dates?.fromDuration !== 'full';
+              const leaveType = record.leaveType || 'N/A';
               const status = getFinalStatus(record.status, user.loginType);
               return (
                 <View key={record._id} style={styles.row}>
                   <Text style={[styles.cell, { flex: 2 }]}>
-                    {!record.halfDay ? (
-                      fromDate && !isNaN(fromDate.getTime()) && toDate && !isNaN(toDate.getTime())
-                        ? `${fromDate.toLocaleDateString()} - ${toDate.toLocaleDateString()}`
+                    {isHalfDay ? (
+                      fromDate && !isNaN(fromDate.getTime())
+                        ? `${fromDate.toLocaleDateString()} (${record.dates?.fromSession || 'N/A'})`
                         : 'N/A'
                     ) : (
-                      date && !isNaN(date.getTime())
-                        ? date.toLocaleDateString()
+                      fromDate && !isNaN(fromDate.getTime()) && toDate && !isNaN(toDate.getTime())
+                        ? fromDate.toDateString() === toDate.toDateString()
+                          ? fromDate.toLocaleDateString()
+                          : `${fromDate.toLocaleDateString()} - ${toDate.toLocaleDateString()}`
                         : 'N/A'
                     )}
                   </Text>
-                  <Text style={[styles.cell, { flex: 2 }]}>
-                    {typeof leaveType === 'object' ? leaveType.name || 'N/A' : leaveType || 'N/A'}
-                  </Text>
+                  <Text style={[styles.cell, { flex: 2 }]}>{leaveType}</Text>
                   <View style={[styles.cell, { flex: 2 }]}>
                     <Text
                       style={[styles.statusBadge, { backgroundColor: getStatusColor(status) + '20', color: getStatusColor(status) }]}
@@ -153,48 +156,28 @@ const LeaveRecordsTable = React.memo(({ leaveRecords, selectedRecord, setSelecte
                 <Text style={styles.detailValue}>{selectedRecord.designation || 'N/A'}</Text>
               </View>
               <View style={styles.detailRow}>
-                <Text style={styles.detailLabel}>Full/Half Day:</Text>
-                <Text style={styles.detailValue}>{selectedRecord.halfDay ? 'Half Day' : 'Full Day'}</Text>
+                <Text style={styles.detailLabel}>From Date:</Text>
+                <Text style={styles.detailValue}>
+                  {selectedRecord.dates?.from ? new Date(selectedRecord.dates.from).toLocaleDateString() : 'N/A'}
+                  {selectedRecord.dates?.fromDuration !== 'full' && (
+                    <Text> ({selectedRecord.dates.fromSession || 'N/A'})</Text>
+                  )}
+                </Text>
               </View>
-              {selectedRecord.halfDay && (
-                <>
-                  <View style={styles.detailRow}>
-                    <Text style={styles.detailLabel}>Date:</Text>
-                    <Text style={styles.detailValue}>
-                      {selectedRecord.halfDay.date ? new Date(selectedRecord.halfDay.date).toLocaleDateString() : 'N/A'}
-                    </Text>
-                  </View>
-                  <View style={styles.detailRow}>
-                    <Text style={styles.detailLabel}>Session:</Text>
-                    <Text style={styles.detailValue}>{selectedRecord.halfDay.session || 'N/A'}</Text>
-                  </View>
-                </>
-              )}
-              {selectedRecord.fullDay && (
-                <>
-                  <View style={styles.detailRow}>
-                    <Text style={styles.detailLabel}>From Date:</Text>
-                    <Text style={styles.detailValue}>
-                      {selectedRecord.fullDay.from ? new Date(selectedRecord.fullDay.from).toLocaleDateString() : 'N/A'}
-                    </Text>
-                  </View>
-                  <View style={styles.detailRow}>
-                    <Text style={styles.detailLabel}>To Date:</Text>
-                    <Text style={styles.detailValue}>
-                      {selectedRecord.fullDay.to ? new Date(selectedRecord.fullDay.to).toLocaleDateString() : 'N/A'}
-                    </Text>
-                  </View>
-                </>
+              {selectedRecord.dates?.to && selectedRecord.dates.to !== selectedRecord.dates.from && (
+                <View style={styles.detailRow}>
+                  <Text style={styles.detailLabel}>To Date:</Text>
+                  <Text style={styles.detailValue}>
+                    {new Date(selectedRecord.dates.to).toLocaleDateString()}
+                    {selectedRecord.dates?.toDuration !== 'full' && (
+                      <Text> ({selectedRecord.dates.toSession || 'N/A'})</Text>
+                    )}
+                  </Text>
+                </View>
               )}
               <View style={styles.detailRow}>
                 <Text style={styles.detailLabel}>Leave Type:</Text>
-                <Text style={styles.detailValue}>
-                  {selectedRecord.leaveType
-                    ? typeof selectedRecord.leaveType === 'object'
-                      ? selectedRecord.leaveType.name
-                      : selectedRecord.leaveType
-                    : 'N/A'}
-                </Text>
+                <Text style={styles.detailValue}>{selectedRecord.leaveType || 'N/A'}</Text>
               </View>
               <View style={styles.detailRow}>
                 <Text style={styles.detailLabel}>Reason:</Text>
@@ -214,11 +197,54 @@ const LeaveRecordsTable = React.memo(({ leaveRecords, selectedRecord, setSelecte
                 <Text style={styles.detailLabel}>Emergency Contact:</Text>
                 <Text style={styles.detailValue}>{selectedRecord.emergencyContact || 'N/A'}</Text>
               </View>
+              {selectedRecord.compensatoryEntry && (
+                <View style={styles.detailRow}>
+                  <Text style={styles.detailLabel}>Compensatory Entry:</Text>
+                  <Text style={styles.detailValue}>
+                    {selectedRecord.compensatoryEntry.date
+                      ? `${new Date(selectedRecord.compensatoryEntry.date).toLocaleDateString()} (${selectedRecord.compensatoryEntry.hours} hours)`
+                      : 'N/A'}
+                  </Text>
+                </View>
+              )}
+              {selectedRecord.restrictedHoliday && (
+                <View style={styles.detailRow}>
+                  <Text style={styles.detailLabel}>Restricted Holiday:</Text>
+                  <Text style={styles.detailValue}>{selectedRecord.restrictedHoliday || 'N/A'}</Text>
+                </View>
+              )}
+              {selectedRecord.projectDetails && (
+                <View style={styles.detailRow}>
+                  <Text style={styles.detailLabel}>Project Details:</Text>
+                  <Text style={styles.detailValue}>{selectedRecord.projectDetails || 'N/A'}</Text>
+                </View>
+              )}
               {selectedRecord.medicalCertificate && (
                 <View style={styles.actions}>
                   <Button 
                     mode="contained" 
-                    onPress={onViewFile} 
+                    onPress={() => onViewFile('medical')} 
+                    style={styles.actionButton}
+                    disabled={isFileLoading}
+                  >
+                    {isFileLoading ? (
+                      <ActivityIndicator color="#fff" />
+                    ) : (
+                      'View Certificate'
+                    )}
+                  </Button>
+                  {fileError && (
+                    <Text style={styles.errorText}>
+                      {fileError}
+                    </Text>
+                  )}
+                </View>
+              )}
+              {selectedRecord.supportingDocuments && (
+                <View style={styles.actions}>
+                  <Button 
+                    mode="contained" 
+                    onPress={() => onViewFile('supporting')} 
                     style={styles.actionButton}
                     disabled={isFileLoading}
                   >
@@ -363,11 +389,11 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: 'bold',
     marginBottom: 20,
-    color: 'white',
+    color: '#1f2937',
     textAlign: 'center',
-    backgroundColor: '#2563eb',
+    backgroundColor: '#e2e8f0',
     padding: 8,
-    borderRadius: 18,
+    borderRadius: 8,
   },
   detailRow: {
     flexDirection: 'row',

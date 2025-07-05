@@ -91,7 +91,6 @@ router.get('/me', authenticateToken, async (req, res) => {
       department: user.department ? { _id: user.department._id, name: user.department.name } : null,
       designation: user.designation,
       employeeType: user.employeeType,
-      loginType: user.loginType, // Added role
       profilePicture: user.profilePicture, //Added Profile Picture
     });
   } catch (err) {

@@ -9,7 +9,7 @@ import * as Sharing from 'expo-sharing';
 import { Platform } from 'react-native';
 
 // Hardcode the API URL to ensure it's always correct
-const API_URL = 'http://192.168.1.21:5001/api';
+const API_URL = 'http://192.168.1.28:5001/api';
 
 console.log('Using API URL:', API_URL);
 

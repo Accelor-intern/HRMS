@@ -1,5 +1,5 @@
 
-import React, { useState, useContext, useEffect } from 'react';
+import React, { useState, useContext, useEffect, useCallback } from 'react';
 import {
     View,
     Text,
@@ -15,6 +15,8 @@ import {
 import { AuthContext } from '../context/AuthContext';
 import api from '../services/api';
 import { Modal, Portal, Button, Provider as PaperProvider } from 'react-native-paper';
+import { useFileHandler } from '../Hooks/useFileHandler';
+import ImageViewing from 'react-native-image-viewing';
 
 
 const LeaveRequests = ({ navigation }) => {
@@ -30,10 +32,40 @@ const LeaveRequests = ({ navigation }) => {
     const [remarks, setRemarks] = useState('');
     const [showRemarksInput, setShowRemarksInput] = useState(false);
     const [actionType, setActionType] = useState(''); // 'approve' or 'reject'
+    const [currentFile, setCurrentFile] = useState(null);
+
+    const {
+        handleViewFile,
+        error: fileError,
+        isImageViewerVisible,
+        setIsImageViewerVisible,
+        imageUri,
+        isLoading: isFileLoading
+    } = useFileHandler({
+        fileId: currentFile?._id,
+        fileName: currentFile?.filename,
+        localFile: null
+    });
+
+    // Trigger file viewing when currentFile changes
+    useEffect(() => {
+        if (currentFile) {
+            handleViewFile();
+        }
+    }, [currentFile, handleViewFile]);
+
+    const onViewFile = useCallback((type) => {
+        if (type === 'medical' && selectedRecord?.medicalCertificate?._id) {
+            setCurrentFile(selectedRecord.medicalCertificate);
+        }
+        if (type === 'supporting' && selectedRecord?.supportingDocuments?._id) {
+            setCurrentFile(selectedRecord.supportingDocuments);
+        }
+    }, [selectedRecord]);
 
     const fetchLeaveRequests = async (pageNum = 1, reset = false) => {
         if (!user) return;
-        
+
         try {
             const response = await api.get('/leaves', {
                 params: {
@@ -44,20 +76,20 @@ const LeaveRequests = ({ navigation }) => {
                     excludeSelf: true // Ensure the API excludes the current user's records
                 }
             });
-            
+
             // Client-side filtering as an extra precaution
             const userId = user._id || user.id;
             const filteredLeaves = (response.data.leaves || []).filter(record => {
                 const recordUserId = record.employee?._id || record.employee?.id || record.employee;
                 return recordUserId !== userId; // Exclude HOD's own records
             });
-            
+
             if (reset) {
                 setLeaveRequests(filteredLeaves);
             } else {
                 setLeaveRequests(prev => [...prev, ...filteredLeaves]);
             }
-            
+
             // Update total pages based on filtered count
             setTotalPages(Math.ceil(response.data.total / response.data.limit));
         } catch (error) {
@@ -107,11 +139,11 @@ const LeaveRequests = ({ navigation }) => {
         // If we're already showing remarks and user clicks approve/reject again
         try {
             setIsApproving(true);
-            await api.put(`/leaves/${leaveId}/approve`, { 
-                status, 
+            await api.put(`/leaves/${leaveId}/approve`, {
+                status,
                 remarks: remarks || (status === 'Approved' ? 'Approved by HOD' : 'Rejected by HOD')
             });
-            
+
             // Create the updated status object
             const updatedStatus = {
                 ...selectedRecord.status, // Preserve existing status
@@ -119,24 +151,24 @@ const LeaveRequests = ({ navigation }) => {
                 updatedAt: new Date().toISOString(),
                 remarks: remarks || (status === 'Approved' ? 'Approved by HOD' : 'Rejected by HOD')
             };
-            
+
             // Update the leaveRequests array
-            setLeaveRequests(prevRequests => 
-                prevRequests.map(req => 
-                    req._id === leaveId 
-                        ? { 
-                            ...req, 
+            setLeaveRequests(prevRequests =>
+                prevRequests.map(req =>
+                    req._id === leaveId
+                        ? {
+                            ...req,
                             status: {
                                 ...req.status,
                                 hod: status,
                                 updatedAt: new Date().toISOString(),
                                 remarks: remarks || (status === 'Approved' ? 'Approved by HOD' : 'Rejected by HOD')
                             }
-                        } 
+                        }
                         : req
                 )
             );
-            
+
             // If modal is open for this leave, update the selected record
             if (selectedRecord && selectedRecord._id === leaveId) {
                 setSelectedRecord(prev => ({
@@ -145,12 +177,12 @@ const LeaveRequests = ({ navigation }) => {
                     remarks: updatedStatus.remarks
                 }));
             }
-            
+
             // Reset remarks and hide input after submission
             setRemarks('');
             setShowRemarksInput(false);
             setActionType('');
-            
+
             Alert.alert('Success', `Leave request ${status} successfully`);
         } catch (error) {
             console.error('Error approving leave:', error);
@@ -160,18 +192,18 @@ const LeaveRequests = ({ navigation }) => {
         }
     };
 
-      if (isLoading && page === 1) {
+    if (isLoading && page === 1) {
         return (
-          <View style={styles.loader}>
-            <ActivityIndicator size="large" />
-          </View>
+            <View style={styles.loader}>
+                <ActivityIndicator size="large" />
+            </View>
         );
-      }
+    }
 
     return (
         <PaperProvider>
-            <ScrollView 
-                style={styles.container} 
+            <ScrollView
+                style={styles.container}
                 keyboardShouldPersistTaps="handled"
                 refreshControl={
                     <RefreshControl
@@ -198,28 +230,23 @@ const LeaveRequests = ({ navigation }) => {
                             </View>
                             {Array.isArray(leaveRequests) ? (
                                 [...leaveRequests].map((leaveRequest) => {
-                                    let fromDate = null;
-                                    let toDate = null;
-                                    let date = null;
-                                    if (!leaveRequest.halfDay) {
-                                        fromDate = leaveRequest.fullDay.from ? new Date(leaveRequest.fullDay.from) : null;
-                                        toDate = leaveRequest.fullDay.to ? new Date(leaveRequest.fullDay.to) : null;
-                                    } else {
-                                        date = leaveRequest.halfDay.date ? new Date(leaveRequest.halfDay.date) : null;
-                                    }
+                                    const fromDate = leaveRequest.dates?.from ? new Date(leaveRequest.dates.from) : null;
+                                    const toDate = leaveRequest.dates?.to ? new Date(leaveRequest.dates.to) : null;
+                                    const isHalfDay = leaveRequest.dates?.fromDuration !== 'full' || leaveRequest.dates?.toDuration !== 'full';
                                     const leaveType = leaveRequest.leaveType;
                                     const status = getFinalStatus(leaveRequest.status);
                                     return (
                                         <View key={leaveRequest._id} style={styles.row}>
                                             <Text style={[styles.cell, { flex: 2 }]}>
-                                                {!leaveRequest.halfDay ? (
-                                                    fromDate && !isNaN(fromDate.getTime()) && toDate && !isNaN(toDate.getTime())
+                                                {fromDate && !isNaN(fromDate.getTime()) && toDate && !isNaN(toDate.getTime()) && fromDate.toDateString() === toDate.toDateString()
+                                                    ? fromDate.toLocaleDateString()
+                                                    : fromDate && !isNaN(fromDate.getTime()) && toDate && !isNaN(toDate.getTime())
                                                         ? `${fromDate.toLocaleDateString()} - ${toDate.toLocaleDateString()}`
-                                                        : 'N/A'
-                                                ) : (
-                                                    date && !isNaN(date.getTime())
-                                                        ? date.toLocaleDateString()
-                                                        : 'N/A'
+                                                        : 'N/A'}
+                                                {isHalfDay && (
+                                                    <Text style={{ fontSize: 12, color: '#666' }}>
+                                                        {leaveRequest.dates.fromSession ? ` (${leaveRequest.dates.fromSession})` : ''}
+                                                    </Text>
                                                 )}
                                             </Text>
                                             <Text style={[styles.cell, { flex: 2 }]}>
@@ -290,49 +317,30 @@ const LeaveRequests = ({ navigation }) => {
                                     </Text>
                                 </View>
                                 <View style={styles.detailRow}>
-                                    <Text style={styles.detailLabel}>Full/Half Day:</Text>
+                                    <Text style={styles.detailLabel}>From Date:</Text>
                                     <Text style={styles.detailValue}>
-                                        {selectedRecord.halfDay ? 'Half Day' : 'Full Day'}
+                                        {selectedRecord.dates?.from ? new Date(selectedRecord.dates.from).toLocaleDateString() : 'N/A'}
+                                        {selectedRecord.dates?.fromDuration !== 'full' && (
+                                            <Text> ({selectedRecord.dates.fromSession || 'N/A'})</Text>
+                                        )}
                                     </Text>
                                 </View>
-                                {selectedRecord.halfDay && (
-                                    <>
-                                        <View style={styles.detailRow}>
-                                            <Text style={styles.detailLabel}>Date:</Text>
-                                            <Text style={styles.detailValue}>
-                                                {selectedRecord.halfDay.date ? new Date(selectedRecord.halfDay.date).toLocaleDateString() : 'N/A'}
-                                            </Text>
-                                        </View>
-                                        <View style={styles.detailRow}>
-                                            <Text style={styles.detailLabel}>Session:</Text>
-                                            <Text style={styles.detailValue}>
-                                                {selectedRecord.halfDay.session || 'N/A'}
-                                            </Text>
-                                        </View>
-                                    </>
+                                {selectedRecord.dates?.to && selectedRecord.dates.to !== selectedRecord.dates.from && (
+                                    <View style={styles.detailRow}>
+                                        <Text style={styles.detailLabel}>To Date:</Text>
+                                        <Text style={styles.detailValue}>
+                                            {new Date(selectedRecord.dates.to).toLocaleDateString()}
+                                            {selectedRecord.dates?.toDuration !== 'full' && (
+                                                <Text> ({selectedRecord.dates.toSession || 'N/A'})</Text>
+                                            )}
+                                        </Text>
+                                    </View>
                                 )}
-                                {selectedRecord.fullDay && (
-                                    <>
-                                        <View style={styles.detailRow}>
-                                            <Text style={styles.detailLabel}>From Date:</Text>
-                                            <Text style={styles.detailValue}>
-                                                {selectedRecord.fullDay.from ? new Date(selectedRecord.fullDay.from).toLocaleDateString() : 'N/A'}
-                                            </Text>
-                                        </View>
-                                        <View style={styles.detailRow}>
-                                            <Text style={styles.detailLabel}>To Date:</Text>
-                                            <Text style={styles.detailValue}>
-                                                {selectedRecord.fullDay.to ? new Date(selectedRecord.fullDay.to).toLocaleDateString() : 'N/A'}
-                                            </Text>
-                                        </View>
-                                    </>
-                                )}
-
                                 <View style={styles.detailRow}>
                                     <Text style={styles.detailLabel}>Leave Type:</Text>
                                     <Text style={styles.detailValue}>
-                                        {selectedRecord.leaveType ? 
-                                            (typeof selectedRecord.leaveType === 'object' ? selectedRecord.leaveType.name : selectedRecord.leaveType) : 
+                                        {selectedRecord.leaveType ?
+                                            (typeof selectedRecord.leaveType === 'object' ? selectedRecord.leaveType.name : selectedRecord.leaveType) :
                                             'N/A'}
                                     </Text>
                                 </View>
@@ -346,8 +354,8 @@ const LeaveRequests = ({ navigation }) => {
                                 <View style={styles.detailRow}>
                                     <Text style={styles.detailLabel}>Charge Given To:</Text>
                                     <Text style={styles.detailValue}>
-                                        {selectedRecord.chargeGivenTo ? 
-                                            (typeof selectedRecord.chargeGivenTo === 'object' ? selectedRecord.chargeGivenTo.name : selectedRecord.chargeGivenTo) : 
+                                        {selectedRecord.chargeGivenTo ?
+                                            (typeof selectedRecord.chargeGivenTo === 'object' ? selectedRecord.chargeGivenTo.name : selectedRecord.chargeGivenTo) :
                                             'N/A'}
                                     </Text>
                                 </View>
@@ -357,6 +365,49 @@ const LeaveRequests = ({ navigation }) => {
                                         {selectedRecord.emergencyContact || 'N/A'}
                                     </Text>
                                 </View>
+
+                                {selectedRecord.medicalCertificate && (
+                                    <View style={styles.actions}>
+                                        <Button
+                                            mode="contained"
+                                            onPress={() => onViewFile('medical')}
+                                            style={styles.actionButton}
+                                            disabled={isFileLoading}
+                                        >
+                                            {isFileLoading ? (
+                                                <ActivityIndicator color="#fff" />
+                                            ) : (
+                                                'View Certificate'
+                                            )}
+                                        </Button>
+                                        {fileError && (
+                                            <Text style={styles.errorText}>
+                                                {fileError}
+                                            </Text>
+                                        )}
+                                    </View>
+                                )}
+                                {selectedRecord.supportingDocuments && (
+                                    <View style={styles.actions}>
+                                        <Button
+                                            mode="contained"
+                                            onPress={() => onViewFile('supporting')}
+                                            style={styles.actionButton}
+                                            disabled={isFileLoading}
+                                        >
+                                            {isFileLoading ? (
+                                                <ActivityIndicator color="#fff" />
+                                            ) : (
+                                                'View Certificate'
+                                            )}
+                                        </Button>
+                                        {fileError && (
+                                            <Text style={styles.errorText}>
+                                                {fileError}
+                                            </Text>
+                                        )}
+                                    </View>
+                                )}
                                 <View style={{ marginTop: 16 }}>
                                     <Text style={[styles.detailLabel, { marginBottom: 8 }]}>Approval Status:</Text>
 
@@ -364,9 +415,9 @@ const LeaveRequests = ({ navigation }) => {
                                         <Text style={styles.detailLabel}>• HOD:</Text>
                                         {selectedRecord.status?.hod === 'Approved' || selectedRecord.status?.hod === 'Rejected' ? (
                                             <Text style={[
-                                                styles.detailValue, 
-                                                { 
-                                                    color: selectedRecord.status?.hod === 'Approved' ? '#10b981' : '#ef4444' 
+                                                styles.detailValue,
+                                                {
+                                                    color: selectedRecord.status?.hod === 'Approved' ? '#10b981' : '#ef4444'
                                                 }
                                             ]}>
                                                 {selectedRecord.status?.hod}

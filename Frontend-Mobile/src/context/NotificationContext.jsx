@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import { io } from 'socket.io-client';
 import { useAuth } from './AuthContext';
 import api from '../services/api';
-const EXPO_PUBLIC_API_URL = 'http://192.168.1.21:5001/api';
+const EXPO_PUBLIC_API_URL = 'http://192.168.1.28:5001/api';
 
 const NotificationContext = createContext();
 

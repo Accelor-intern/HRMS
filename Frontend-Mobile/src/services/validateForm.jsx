@@ -1,60 +1,56 @@
 import { LEAVE_TYPES } from './constants';
 
 const validateBasicFields = (form) => {
-  // Log the exact values being checked
-  const values = {
-    leaveType: form.leaveType,
-    reason: form.reason,
-    chargeTo: form.chargeTo,
-    emergencyContact: form.emergencyContact,
-    duration: form.duration
-  };
-  
-  console.log('Validating basic fields with values:', JSON.stringify(values, null, 2));
-  
-  // Check each field individually with logging
-  const leaveTypeValue = typeof form.leaveType === 'string' ? form.leaveType.trim() : '';
-  if (!leaveTypeValue) {
-    console.log('Validation failed: Leave Type is required', { leaveType: form.leaveType });
+  console.log('called validateBasicFields');
+  console.log('form', form);
+  if (!form.leaveType?.trim()) {
     return 'Leave Type is required';
   }
-  if (!form.reason) {
-    console.log('Validation failed: Reason is required');
+  if (!form.reason?.trim()) {
     return 'Reason is required';
   }
   if (!form.chargeTo) {
-    console.log('Validation failed: Please select an employee to charge');
     return 'Please select an employee to charge';
   }
   if (!form.emergencyContact) {
-    console.log('Validation failed: Emergency Contact is required');
     return 'Emergency Contact is required';
   }
-  if (!form.duration) {
-    console.log('Validation failed: Leave Duration is required');
+  if (!form.dates.fromDuration) {
     return 'Leave Duration is required';
   }
-  
-  console.log('All basic fields are valid');
+  console.log('here basic');
   return null;
 };
 
 const validateDates = (form) => {
-  if (form.duration === 'half' && (!form.halfDay.date || !form.halfDay.session)) {
-    return 'Half Day Date and Session are required';
+  // Check if from date is provided
+  if (!form.dates.from) {
+    return 'From Date is required';
   }
-  if (form.duration === 'half' && (form.fullDay.from || form.fullDay.to)) {
-    return 'Full Day dates must be empty for Half Day leave';
+
+  // For half-day leaves
+  if (form.dates.fromDuration === 'half') {
+    if (!form.dates.fromSession) {
+      return 'Session is required for half-day leave';
+    }
+    // Allow to date for multi-day half-day leaves
+    if (form.dates.to && new Date(form.dates.to) < new Date(form.dates.from)) {
+      return 'To Date cannot be earlier than From Date';
+    }
   }
-  if (form.duration === 'full' && (!form.fullDay.from || !form.fullDay.to)) {
-    return 'Full Day From and To dates are required';
+  
+  // For full-day leaves
+  if (form.dates.fromDuration === 'full') {
+    if (form.dates.to && new Date(form.dates.to) < new Date(form.dates.from)) {
+      return 'To Date cannot be earlier than From Date';
+    }
+    
+    // If toDuration is half, validate toSession
+    if (form.dates.toDuration === 'half' && !form.dates.toSession) {
+      return 'Session is required for half-day To Date';
+    }
   }
-  if (form.duration === 'full' && (form.halfDay.date || form.halfDay.session !== 'forenoon')) {
-    return 'Half Day fields must be empty for Full Day leave';
-  }
-  if (form.fullDay.from && form.fullDay.to && new Date(form.fullDay.to) < new Date(form.fullDay.from)) {
-    return 'To Date cannot be earlier than From Date';
-  }
+  console.log('here dates');
   return null;
 };
 
@@ -64,7 +60,7 @@ const validateLeaveType = (form, user, leaveDays, compensatoryEntries, canApplyE
   const istTime = new Date(today.getTime() + (today.getTimezoneOffset() * 60 * 1000) + istOffset);
   istTime.setUTCHours(0, 0, 0, 0);
 
-  const fromDate = form.duration === 'full' ? new Date(form.fullDay.from) : new Date(form.halfDay.date);
+  const fromDate = new Date(form.dates.from);
   fromDate.setHours(0, 0, 0, 0);
 
   if (form.leaveType !== 'Medical' && fromDate < istTime) {
@@ -73,7 +69,7 @@ const validateLeaveType = (form, user, leaveDays, compensatoryEntries, canApplyE
 
   switch (form.leaveType) {
     case 'Casual':
-      if (user?.employeeType === 'Confirmed' && form.duration === 'full' && leaveDays > 3) {
+      if (user?.employeeType === 'Confirmed' && form.dates.fromDuration === 'full' && leaveDays > 3) {
         return 'Confirmed employees can take up to 3 consecutive Casual leaves';
       }
       if (user?.employeeType === 'Probation' && leaveDays > 1) {
@@ -85,7 +81,7 @@ const validateLeaveType = (form, user, leaveDays, compensatoryEntries, canApplyE
       if (user?.employeeType !== 'Confirmed') {
         return 'Medical leave is only available for Confirmed employees';
       }
-      if (form.duration === 'half') {
+      if (form.dates.fromDuration === 'half') {
         return 'Medical leave cannot be applied as a half-day leave';
       }
       if (!form.medicalCertificate || !form.medicalCertificate.uri) {
@@ -103,7 +99,7 @@ const validateLeaveType = (form, user, leaveDays, compensatoryEntries, canApplyE
       if (user?.employeeType !== 'Confirmed') {
         return 'Maternity leave is only available for Confirmed employees';
       }
-      if (form.duration === 'half') {
+      if (form.dates.fromDuration === 'half') {
         return 'Maternity leave cannot be applied as a half-day leave';
       }
       if (leaveDays !== 90) {
@@ -118,7 +114,7 @@ const validateLeaveType = (form, user, leaveDays, compensatoryEntries, canApplyE
       if (user?.employeeType !== 'Confirmed') {
         return 'Paternity leave is only available for Confirmed employees';
       }
-      if (form.duration === 'half') {
+      if (form.dates.fromDuration === 'half') {
         return 'Paternity leave cannot be applied as a half-day leave';
       }
       if (leaveDays !== 7) {
@@ -130,10 +126,19 @@ const validateLeaveType = (form, user, leaveDays, compensatoryEntries, canApplyE
       if (!canApplyEmergencyLeave) {
         return 'You are not authorized to apply for Emergency Leave';
       }
-      if (leaveDays > 1) {
-        return 'Emergency leave must be half day or one full day';
+      // Allow both half-day and full-day emergency leaves
+      if (form.dates.fromDuration === 'half') {
+        if (leaveDays > 0.5) {
+          return 'Emergency half-day leave cannot exceed 0.5 days';
+        }
+      } else {
+        if (leaveDays > 1) {
+          return 'Emergency full-day leave cannot exceed 1 day';
+        }
       }
-      const leaveDate = form.duration === 'half' ? new Date(form.halfDay.date) : new Date(form.fullDay.from);
+      
+      // Check if the leave is for today
+      const leaveDate = new Date(form.dates.from);
       leaveDate.setHours(0, 0, 0, 0);
       if (leaveDate.getTime() !== istTime.getTime()) {
         return 'Emergency leave must be for the current date only';
@@ -141,16 +146,16 @@ const validateLeaveType = (form, user, leaveDays, compensatoryEntries, canApplyE
       break;
 
     case 'Compensatory':
-      if (!form.compensatoryEntryId) {
+      if (!form.compensatoryEntry) {
         return 'Please select a compensatory leave entry';
       }
-      const entry = compensatoryEntries.find(e => e._id === form.compensatoryEntryId);
+      const entry = compensatoryEntries.find(e => e._id === form.compensatoryEntry);
       if (!entry || entry.status !== 'Available') {
         return 'Selected compensatory leave is not available';
       }
-      const hoursNeeded = form.duration === 'half' ? 4 : 8;
+      const hoursNeeded = form.dates.fromDuration === 'half' ? 4 : 8;
       if (entry.hours !== hoursNeeded) {
-        return `Selected entry (${entry.hours} hours) does not match leave duration (${form.duration === 'half' ? 'Half Day (4 hours)' : 'Full Day (8 hours)'})`;
+        return `Selected entry (${entry.hours} hours) does not match leave duration (${form.dates.fromDuration === 'half' ? 'Half Day (4 hours)' : 'Full Day (8 hours)'})`;
       }
       break;
 
@@ -158,7 +163,7 @@ const validateLeaveType = (form, user, leaveDays, compensatoryEntries, canApplyE
       if (!form.restrictedHoliday) {
         return 'Please select a restricted holiday';
       }
-      if (form.duration !== 'full') {
+      if (form.dates.fromDuration !== 'full') {
         return 'Restricted holidays must be full day';
       }
       break;
@@ -184,34 +189,26 @@ const validateLeaveType = (form, user, leaveDays, compensatoryEntries, canApplyE
       return `${form.leaveType} requires minimum ${noticeDays} working days notice`;
     }
   }
-
+  console.log('here leave type');
   return null;
 };
 
 export const validateLeaveForm = (form, user, leaveDays, compensatoryEntries, canApplyEmergencyLeave) => {
-  console.log('Starting form validation with form:', JSON.stringify(form, null, 2));
-  
-  // First validate basic fields
+  console.log('called validateLeaveForm');
   const basicError = validateBasicFields(form);
   if (basicError) {
-    console.log('Basic validation failed:', basicError);
     return basicError;
   }
-  
-  // Then validate dates
+
   const dateError = validateDates(form);
   if (dateError) {
-    console.log('Date validation failed:', dateError);
     return dateError;
   }
-  
-  // Finally validate leave type specific rules
+
   const leaveTypeError = validateLeaveType(form, user, leaveDays, compensatoryEntries, canApplyEmergencyLeave);
   if (leaveTypeError) {
-    console.log('Leave type validation failed:', leaveTypeError);
     return leaveTypeError;
   }
-  
-  console.log('All validations passed');
+
   return null;
 };

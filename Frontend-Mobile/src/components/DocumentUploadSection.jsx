@@ -1,7 +1,6 @@
-// components/DocumentUploadSection.jsx
 import React from 'react';
 import { View, Text, StyleSheet, ScrollView } from 'react-native';
-import DocumentUploader from '../Hooks/documentUploader';
+import {uploadDocument} from '../Hooks/documentUploader';
 
 const documentFields = [
   { title: '10th & 12th Marksheets', field: 'tenthTwelfthDocs' },
@@ -21,10 +20,11 @@ const DocumentUploadSection = ({ profile, files, setFiles, fileErrors, isLocked 
     <View style={styles.container}>
       <ScrollView
         style={{ flex: 1 }}
-        contentContainerStyle={{ flexGrow: 1 }}
+        contentContainerStyle={{ flexGrow: 1, paddingBottom: 80 }}
         scrollEnabled={true}
         bounces={true}
-        showsVerticalScrollIndicator={true}>
+        showsVerticalScrollIndicator={true}
+      >
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Document Uploads</Text>
           {documentFields.map((doc) => (
@@ -49,10 +49,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#fff',
-  },
-  scrollContent: {
-    padding: 16,
-    paddingBottom: 80, // Extra space for the save button
   },
   section: {
     padding: 16,

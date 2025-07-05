@@ -8,9 +8,6 @@ import cron from 'node-cron';
 import { gfsReady } from './utils/gridfs.js';
 import { syncAttendance } from './utils/syncAttendance.js';
 import { processLateArrivalsAndAbsents } from './utils/processAttendance.js';
-import { updateAttendanceWithLeaves } from './utils/processAttendance.js';
-import { updateAttendanceWithOD } from './utils/processAttendance.js';
-import { processLateArrivalStatus } from './utils/processAttendance.js';
 import { processUnclaimedOT } from './utils/processUnclaimedOT.js';
 import { checkAbsences } from './utils/absenceCron.js';
 
@@ -20,7 +17,7 @@ const app = express();
 const server = http.createServer(app);
 
 const allowedOrigins = [
-  'http://192.168.1.20:5001',
+  'http://192.168.1.28:5001',
   'http://localhost:5174',
   'http://localhost:3000',
   'http://192.168.59.225:5001',
@@ -81,6 +78,7 @@ app.use('/api/punch-missed', punchMissedRouter);
 app.use('/api/payroll', payrollRouter);
 
 // MongoDB connection
+console.log('here');
 mongoose.connect(process.env.MONGO_URI)
   .then(() => {
     console.log('MongoDB connected');
@@ -91,11 +89,11 @@ mongoose.connect(process.env.MONGO_URI)
         console.log('GridFS initialized successfully');
 
         // Schedule syncAttendance at 9:30 AM and 2:00 PM daily
-        cron.schedule('39 11 * * *', async () => {
-          console.log('Running syncAttendance at 11:43 AM...');
-          await syncAttendance();
-          console.log('syncAttendance at 9:30 AM completed.');
-        }, { timezone: 'Asia/Kolkata' });
+        // cron.schedule('30 9 * * *', async () => {
+        //   console.log('Running syncAttendance at 9:30 AM...');
+        //   await syncAttendance();
+        //   console.log('syncAttendance at 9:30 AM completed.');
+        // }, { timezone: 'Asia/Kolkata' });
 
         // cron.schedule('00 14 * * *', async () => {
         //   console.log('Running syncAttendance at 2:00 PM...');
@@ -103,26 +101,12 @@ mongoose.connect(process.env.MONGO_URI)
         //   console.log('syncAttendance at 2:00 PM completed.');
         // }, { timezone: 'Asia/Kolkata' });
 
-       // Schedule processLateArrivalsAndAbsents at 9:35 AM daily
-        cron.schedule('40 11 * * *', async () => {
-          console.log('Running processLateArrivalsAndAbsents at 11:52 AM...');
-          await processLateArrivalsAndAbsents();
-          console.log('processLateArrivalsAndAbsents at 11:52 AM completed.');
-        }, { timezone: 'Asia/Kolkata' });
-
-         // Schedule updateAttendanceWithLeaves at 9:35 AM daily
-        cron.schedule('20 13 * * *', async () => {
-          console.log('Running updateAttendanceWithLeaves at 11:52 AM...');
-          await updateAttendanceWithLeaves();
-          console.log('updateAttendanceWithLeaves at 11:52 AM completed.');
-        }, { timezone: 'Asia/Kolkata' });
-
-         // Schedule updateAttendanceWithOD at 9:35 AM daily
-        cron.schedule('42 13 * * *', async () => {
-          console.log('Running updateAttendanceWithOD at 11:52 AM...');
-          await updateAttendanceWithOD();
-          console.log('updateAttendanceWithOD at 11:52 AM completed.');
-        }, { timezone: 'Asia/Kolkata' });
+        // // Schedule processLateArrivalsAndAbsents at 9:35 AM daily
+        // cron.schedule('32 9 * * *', async () => {
+        //   console.log('Running processLateArrivalsAndAbsents at 9:35 AM...');
+        //   await processLateArrivalsAndAbsents();
+        //   console.log('processLateArrivalsAndAbsents at 9:35 AM completed.');
+        // }, { timezone: 'Asia/Kolkata' });
 
         // // Schedule processUnclaimedOT at 12:30 AM daily
         // cron.schedule('35 9 * * *', async () => {
@@ -137,15 +121,6 @@ mongoose.connect(process.env.MONGO_URI)
         //   await checkAbsences();
         //   console.log('checkAbsences at midnight completed.');
         // }, { timezone: 'Asia/Kolkata' });
-
-        
-
-         // Schedule processLateArrivalStatus at 9:35 AM daily
-        cron.schedule('03 15 * * *', async () => {
-          console.log('Running processLateArrivalStatus at 11:52 AM...');
-          await processLateArrivalStatus();
-          console.log('processLateArrivalStatus at 11:52 AM completed.');
-        }, { timezone: 'Asia/Kolkata' });
 
         const PORT = process.env.PORT || 5000;
         server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
@@ -189,6 +164,3 @@ io.on('connection', socket => {
     console.log('User disconnected:', socket.id);
   });
 });
-
-
-

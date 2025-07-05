@@ -10,14 +10,14 @@ import auth from '../middleware/auth.js';
 import role from '../middleware/role.js';
 import Audit from '../models/Audit.js';
 import { upload, uploadToGridFS, gfsReady } from '../middleware/fileupload.js';
-import { getGfs, gfsReady as gridFsReady } from '../utils/gridfs.js';
+import { getGfs } from '../utils/gridfs.js';
 import dotenv from 'dotenv';
 import fs from 'fs';
 import path from 'path';
 import Docxtemplater from 'docxtemplater';
 import PizZip from 'pizzip';
 import numberToWords from 'number-to-words';
-import moment from 'moment';
+import { toIST, formatForDB, formatForDisplay, parseDate, validateDate, startOfDay, endOfDay, now } from '../utils/dateUtils.js';
 
 dotenv.config();
 
@@ -25,12 +25,14 @@ function parseExcelDate(value) {
   if (!value) return undefined;
   if (typeof value === 'number') {
     // Excel's epoch starts at 1900-01-01, treat as UTC
-    const date = new Date(Date.UTC(1970, 0, 1));
-    date.setUTCSeconds(Math.round((value - 25569) * 86400));
-    return date;
+    const date = toIST(new Date((value - 25569) * 86400 * 1000));
+    if (!validateDate(date)) return undefined;
+    return formatForDB(date);
   }
-  // Parse as UTC
-  return new Date(Date.parse(value + 'Z'));
+  // Parse as string in IST
+  const date = toIST(parseDate(value));
+  if (!validateDate(date)) return undefined;
+  return formatForDB(date);
 }
 
 // Middleware to check gfs readiness
@@ -76,7 +78,6 @@ const checkForFiles = (req, res, next) => {
         console.error('Upload error:', err);
         return res.status(400).json({ message: `Upload error: ${err.message}` });
       }
-      // Manually upload files to GridFS
       req.uploadedFiles = {};
       try {
         if (!req.files || Object.keys(req.files).length === 0) {
@@ -120,6 +121,21 @@ const excelUpload = multer({
   limits: { fileSize: 5 * 1024 * 1024 }
 });
 
+// Helper function to format employee dates in IST
+function formatEmployeeDates(employee) {
+  const employeeObj = employee.toObject();
+  return {
+    ...employeeObj,
+    dateOfBirth: employee.dateOfBirth ? formatForDisplay(employee.dateOfBirth, 'DD-MM-YYYY') : undefined,
+    joiningDate: employee.joiningDate ? formatForDisplay(employee.joiningDate, 'DD-MM-YYYY') : undefined,
+    dateOfResigning: employee.dateOfResigning ? formatForDisplay(employee.dateOfResigning, 'DD-MM-YYYY') : undefined,
+    confirmationDate: employee.confirmationDate ? formatForDisplay(employee.confirmationDate, 'DD-MM-YYYY') : undefined,
+    lastEmergencyLeaveToggle: employee.lastEmergencyLeaveToggle ? formatForDisplay(employee.lastEmergencyLeaveToggle, 'DD-MM-YYYY HH:mm') : undefined,
+    createdAt: employee.createdAt ? formatForDisplay(employee.createdAt, 'DD-MM-YYYY HH:mm') : undefined,
+    updatedAt: employee.updatedAt ? formatForDisplay(employee.updatedAt, 'DD-MM-YYYY HH:mm') : undefined,
+  };
+}
+
 // Get document metadata for an employee
 router.get('/:id/documents', auth, ensureGfs, async (req, res) => {
   try {
@@ -162,14 +178,15 @@ router.get('/', auth, role(['Admin', 'CEO']), async (req, res) => {
     const employees = await Employee.find().populate('department reportingManager');
     console.log('Fetching employees for role:', req.user.role);
     console.log('Employees found:', employees.length);
-    res.json(employees);
+    const formattedEmployees = employees.map(formatEmployeeDates);
+    res.json(formattedEmployees);
   } catch (err) {
     console.error('Error fetching employees:', err);
     res.status(500).json({ message: 'Server error', error: err.message });
   }
 });
 
-// Get employees in the same department, excluding those assigned to overlapping leaves or on leave themselves
+// Get employees in the same department, excluding those assigned to overlapping leaves or on leave
 router.get('/department', auth, role(['HOD', 'Employee']), async (req, res) => {
   try {
     const { id, loginType } = req.user;
@@ -187,26 +204,34 @@ router.get('/department', auth, role(['HOD', 'Employee']), async (req, res) => {
       _id: { $ne: id }, // Exclude logged-in user
     };
     if (loginType === 'Employee') {
-      query.loginType = { $nin: ['HOD', 'CEO', 'Admin'] }; // Exclude HOD, CEO, Admin for regular employees
+      query.loginType = { $nin: ['HOD', 'CEO', 'Admin'] };
     } else if (loginType === 'HOD') {
-      query.loginType = { $nin: ['CEO', 'Admin'] }; // Exclude CEO, Admin for HODs
+      query.loginType = { $nin: ['CEO', 'Admin'] };
     }
 
     let excludedEmployeeIds = [];
     if (startDate && endDate) {
-      const parsedStart = new Date(Date.parse(startDate + 'T00:00:00Z'));
-      const parsedEnd = new Date(Date.parse(endDate + 'T23:59:59.999Z'));
-
-      if (isNaN(parsedStart.getTime()) || isNaN(parsedEnd.getTime())) {
+      const parsedStart = parseDate(startDate);
+      const parsedEnd = parseDate(endDate);
+      if (!validateDate(parsedStart) || !validateDate(parsedEnd)) {
         return res.status(400).json({ message: 'Invalid date format' });
       }
+
       if (parsedEnd < parsedStart) {
         return res.status(400).json({ message: 'End date must be after start date' });
       }
 
-      console.log('Half-day session handling:', { fromDuration, fromSession, toDuration, toSession });
+      const startUTC = formatForDB(parsedStart);
+      const endUTC = formatForDB(parsedEnd);
 
-      // Optimized query combining chargeGivenTo and employee leaves
+      query.$and = query.$and || [];
+      query.$and.push({
+        joiningDate: {
+          $gte: startUTC,
+          $lte: endUTC
+        }
+      });
+
       const overlappingLeaves = await Leave.find({
         $or: [
           {
@@ -214,8 +239,8 @@ router.get('/department', auth, role(['HOD', 'Employee']), async (req, res) => {
               { chargeGivenTo: { $exists: true } },
               { employee: { $exists: true } }
             ],
-            'fullDay.from': { $lte: parsedEnd },
-            'fullDay.to': { $gte: parsedStart },
+            'fullDay.from': { $lte: endUTC },
+            'fullDay.to': { $gte: startUTC },
             $and: [
               { 'status.hod': { $in: ['Pending', 'Approved'] } },
               { 'status.ceo': { $in: ['Pending', 'Approved'] } },
@@ -225,7 +250,7 @@ router.get('/department', auth, role(['HOD', 'Employee']), async (req, res) => {
               { 'fullDay.fromDuration': 'full' },
               { 'fullDay.fromDuration': 'half', 'fullDay.fromSession': { $in: ['forenoon', 'afternoon'] } }
             ],
-            ...(parsedStart.toISOString().split('T')[0] !== parsedEnd.toISOString().split('T')[0] && {
+            ...(startUTC.toISOString().split('T')[0] !== endUTC.toISOString().split('T')[0] && {
               $or: [
                 { 'fullDay.toDuration': 'full' },
                 { 'fullDay.toDuration': 'half', 'fullDay.toSession': 'forenoon' }
@@ -237,8 +262,8 @@ router.get('/department', auth, role(['HOD', 'Employee']), async (req, res) => {
               { chargeGivenTo: { $exists: true } },
               { employee: { $exists: true } }
             ],
-            'fullDay.from': { $gte: parsedStart, $lte: parsedEnd },
-            'fullDay.to': { $gte: parsedStart, $lte: parsedEnd },
+            'fullDay.from': { $gte: startUTC, $lte: endUTC },
+            'fullDay.to': { $gte: startUTC, $lte: endUTC },
             'fullDay.fromDuration': 'half',
             'fullDay.fromSession': { $in: ['forenoon', 'afternoon'] },
             $and: [
@@ -274,7 +299,8 @@ router.get('/department', auth, role(['HOD', 'Employee']), async (req, res) => {
       .populate('department', 'name');
     console.log('Fetching department employees for:', loginType, user.department._id);
     console.log('Employees found:', employees.length);
-    res.json(employees);
+    const formattedEmployees = employees.map(formatEmployeeDates);
+    res.json(formattedEmployees);
   } catch (err) {
     console.error('Error fetching department employees:', err);
     res.status(500).json({ message: 'Server error', error: err.message });
@@ -301,7 +327,8 @@ router.get('/:id', auth, async (req, res) => {
     }
     const employee = await Employee.findById(req.params.id).populate('department reportingManager');
     if (!employee) return res.status(404).json({ message: 'Employee not found' });
-    res.json(employee);
+    const formattedEmployee = formatEmployeeDates(employee);
+    res.json(formattedEmployee);
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
   }
@@ -327,7 +354,7 @@ router.post('/', auth, role(['Admin']), ensureGfs, ensureDbConnection, checkForF
       'motherName', 'mobileNumber', 'permanentAddress', 'currentAddress', 'aadharNumber',
       'bloodGroup', 'gender', 'maritalStatus', 'emergencyContactName', 'emergencyContactNumber',
       'dateOfJoining', 'reportingManager', 'status', 'loginType', 'designation',
-      'location', 'department', 'panNumber', 'paymentType', 'ctc', 'basic', 'inHand' //CHECK THE ISSUE FOR PAN NUMBER
+      'location', 'department', 'panNumber', 'paymentType', 'ctc', 'basic', 'inHand'
     ];
     for (const field of requiredFields) {
       if (!req.body[field] || req.body[field].toString().trim() === '') {
@@ -434,7 +461,7 @@ router.post('/', auth, role(['Admin']), ensureGfs, ensureDbConnection, checkForF
       email,
       password,
       name,
-      dateOfBirth: new Date(Date.parse(dateOfBirth + 'T00:00:00Z')),
+      dateOfBirth: formatForDB(parseDate(dateOfBirth)),
       fatherName,
       motherName,
       mobileNumber,
@@ -447,13 +474,13 @@ router.post('/', auth, role(['Admin']), ensureGfs, ensureDbConnection, checkForF
       spouseName,
       emergencyContactName,
       emergencyContactNumber,
-      dateOfJoining: new Date(Date.parse(dateOfJoining + 'T00:00:00Z')),
+      joiningDate: formatForDB(toIST(dateOfJoining)),
       reportingManager,
       status,
-      dateOfResigning: status === 'Resigned' ? new Date(Date.parse(dateOfResigning + 'T00:00:00Z')) : null,
+      dateOfResigning: status === 'Resigned' ? formatForDB(toIST(dateOfResigning)) : null,
       employeeType: status === 'Working' ? employeeType : null,
       probationPeriod: status === 'Working' && employeeType === 'Probation' ? probationPeriod : null,
-      confirmationDate: status === 'Working' && employeeType === 'Probation' ? new Date(Date.parse(confirmationDate + 'T00:00:00Z')) : null,
+      confirmationDate: status === 'Working' && employeeType === 'Probation' ? formatForDB(toIST(confirmationDate)) : null,
       referredBy,
       loginType,
       designation,
@@ -499,7 +526,8 @@ router.post('/', auth, role(['Admin']), ensureGfs, ensureDbConnection, checkForF
       console.warn('Audit logging failed:', auditErr.message);
     }
 
-    res.status(201).json(newEmployee);
+    const formattedEmployee = formatEmployeeDates(newEmployee);
+    res.status(201).json(formattedEmployee);
   } catch (err) {
     console.error('Error creating employee:', err);
     res.status(500).json({ message: 'Server error', error: err.message });
@@ -509,6 +537,7 @@ router.post('/', auth, role(['Admin']), ensureGfs, ensureDbConnection, checkForF
 // Update employee (Admin or authorized Employee)
 router.put('/:id', auth, ensureGfs, ensureDbConnection, checkForFiles, async (req, res) => {
   try {
+    console.log('Update request received');
     console.log('Received PUT request body:', req.body);
     console.log('Received files:', req.uploadedFiles);
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
@@ -611,7 +640,7 @@ router.put('/:id', auth, ensureGfs, ensureDbConnection, checkForFiles, async (re
     if (updates.status === 'Working' && !updates.employeeType) {
       return res.status(400).json({ message: 'Employee Type is required for Working status' });
     }
-    if (updates.status === 'Working' && updates.employeeType === 'Probation' && (!updates.probationPeriod || !updates.confirmationDate)) {
+    if (updates.status === 'Working' && updates.employeeType === 'Probation' && (!updates.probationPeriod || !validateDate(parseDate(updates.confirmationDate)))) {
       return res.status(400).json({ message: 'Probation period and confirmation date are required for Probation' });
     }
     if (updates.status === 'Working' && updates.employeeType === 'OJT' && (!updates.serviceAgreement || updates.serviceAgreement.toString().trim() === '')) {
@@ -629,10 +658,38 @@ router.put('/:id', auth, ensureGfs, ensureDbConnection, checkForFiles, async (re
     if (updates.esiNumber && !/^\d{12}$/.test(updates.esiNumber)) {
       return res.status(400).json({ message: 'ESI Number must be 12 digits' });
     }
-    if (updates.dateOfBirth) updates.dateOfBirth = new Date(Date.parse(updates.dateOfBirth + 'T00:00:00Z'));
-    if (updates.dateOfJoining) updates.dateOfJoining = new Date(Date.parse(updates.dateOfJoining + 'T00:00:00Z'));
-    if (updates.dateOfResigning) updates.dateOfResigning = new Date(Date.parse(updates.dateOfResigning + 'T00:00:00Z'));
-    if (updates.confirmationDate) updates.confirmationDate = new Date(Date.parse(updates.confirmationDate + 'T00:00:00Z'));
+    if (updates.dateOfBirth) {
+      const parsedDate = toIST(updates.dateOfBirth);
+      if (validateDate(parsedDate)) {
+        updates.dateOfBirth = formatForDB(parsedDate);
+      } else {
+        return res.status(400).json({ message: 'Invalid date of birth format' });
+      }
+    }
+    if (updates.dateOfJoining) {
+      const parsedDate = toIST(updates.dateOfJoining);
+      if (validateDate(parsedDate)) {
+        updates.dateOfJoining = formatForDB(parsedDate);
+      } else {
+        return res.status(400).json({ message: 'Invalid joining date format' });
+      }
+    }
+    if (updates.dateOfResigning) {
+      const parsedDate = toIST(updates.dateOfResigning);
+      if (validateDate(parsedDate)) {
+        updates.dateOfResigning = formatForDB(parsedDate);
+      } else {
+        return res.status(400).json({ message: 'Invalid resignation date format' });
+      }
+    }
+    if (updates.confirmationDate) {
+      const parsedDate = toIST(updates.confirmationDate);
+      if (validateDate(parsedDate)) {
+        updates.confirmationDate = formatForDB(parsedDate);
+      } else {
+        return res.status(400).json({ message: 'Invalid confirmation date format' });
+      }
+    }
     if (updates.paymentType === 'Bank Transfer' && (!updates.bankName || !updates.bankBranch || !updates.accountNumber || !updates.ifscCode)) {
       return res.status(400).json({ message: 'Bank details are required for bank transfer payment type' });
     }
@@ -736,7 +793,8 @@ router.put('/:id', auth, ensureGfs, ensureDbConnection, checkForFiles, async (re
       console.warn('Audit logging failed:', auditErr.message);
     }
 
-    res.json(populatedEmployee);
+    const formattedEmployee = formatEmployeeDates(populatedEmployee);
+    res.json(formattedEmployee);
   } catch (err) {
     console.error('Error updating employee:', err);
     res.status(500).json({ message: 'Server error', error: err.message });
@@ -857,7 +915,8 @@ router.patch('/:id/lock', auth, role(['Admin']), async (req, res) => {
       console.warn('Audit logging failed:', auditErr.message);
     }
 
-    res.json(populatedEmployee);
+    const formattedEmployee = formatEmployeeDates(populatedEmployee);
+    res.json(formattedEmployee);
   } catch (err) {
     console.error('Error locking/unlocking employee:', err);
     res.status(500).json({ message: 'Server error', error: err.message });
@@ -895,7 +954,8 @@ router.patch('/:id/lock-section', auth, role(['Admin']), async (req, res) => {
       console.warn('Audit logging failed:', auditErr.message);
     }
 
-    res.json(populatedEmployee);
+    const formattedEmployee = formatEmployeeDates(populatedEmployee);
+    res.json(formattedEmployee);
   } catch (err) {
     console.error('Error toggling section lock:', err);
     res.status(500).json({ message: 'Server error', error: err.message });
@@ -914,7 +974,7 @@ router.post('/upload-excel', auth, role(['Admin']), excelUpload.single('excel'),
     const results = await Promise.all(
       rows.map(async (row) => {
         try {
-            // Format validations (only if field exists)
+          // Format validations (only if field exists)
           if (row.aadharNumber && !/^\d{12}$/.test(row.aadharNumber)) {
             throw new Error('Aadhar Number must be exactly 12 digits');
           }
@@ -961,7 +1021,7 @@ router.post('/upload-excel', auth, role(['Admin']), excelUpload.single('excel'),
             throw new Error('In Hand must be a valid non-negative number');
           }
 
-            // Department population if department is provided
+          // Department population if department is provided
           let departmentId = null;
           if (row.department) {
             const dept = await Department.findOne({ name: row.department });
@@ -973,7 +1033,7 @@ router.post('/upload-excel', auth, role(['Admin']), excelUpload.single('excel'),
             }
           }
 
-            // Reporting Manager population if reportingManager is provided
+          // Reporting Manager population if reportingManager is provided
           let reportingManagerId = null;
           if (row.reportingManager) {
             const manager = await Employee.findOne({ employeeId: row.reportingManager });
@@ -985,12 +1045,12 @@ router.post('/upload-excel', auth, role(['Admin']), excelUpload.single('excel'),
             }
           }
 
-            // Compose employee data (leave missing fields blank)
+          // Compose employee data (leave missing fields blank)
           const employeeData = {
             employeeId: row.employeeId || '',
             userId: row.userId || '',
             name: row.name || '',
-            dateOfBirth: parseExcelDate(row.dateOfBirth),
+            dateOfBirth: row.dateOfBirth ? formatForDB(parseDate(row.dateOfBirth)) : undefined,
             fatherName: row.fatherName || '',
             motherName: row.motherName || '',
             mobileNumber: row.mobileNumber || '',
@@ -1005,11 +1065,11 @@ router.post('/upload-excel', auth, role(['Admin']), excelUpload.single('excel'),
             spouseName: row.spouseName || '',
             emergencyContactName: row.emergencyContactName || '',
             emergencyContactNumber: row.emergencyContactNumber || '',
-            dateOfJoining: parseExcelDate(row.dateOfJoining),
-            dateOfResigning: row.status === 'Resigned' ? parseExcelDate(row.dateOfResigning) : null,
+            joiningDate: row.joiningDate ? formatForDB(toIST(row.joiningDate)) : undefined,
+            dateOfResigning: row.status === 'Resigned' && row.dateOfResigning ? formatForDB(toIST(row.dateOfResigning)) : null,
             employeeType: row.status === 'Working' ? row.employeeType : null,
             probationPeriod: row.status === 'Working' && row.employeeType === 'Probation' ? row.probationPeriod : null,
-            confirmationDate: row.status === 'Working' && row.employeeType === 'Probation' ? parseExcelDate(row.confirmationDate) : null,
+            confirmationDate: row.status === 'Working' && row.employeeType === 'Probation' && row.confirmationDate ? formatForDB(toIST(row.confirmationDate)) : null,
             reportingManager: reportingManagerId,
             status: row.status || '',
             referredBy: row.referredBy || '',
@@ -1029,10 +1089,9 @@ router.post('/upload-excel', auth, role(['Admin']), excelUpload.single('excel'),
               ifscCode: row.ifscCode || '',
             } : null,
             serviceAgreement: row.status === 'Working' && row.employeeType === 'OJT' ? Number(row.serviceAgreement) : null,
-            ctc: Number(row.ctc),
-            basic: Number(row.basic),
-            inHand: Number(row.inHand),
-              // Lock all sections except document upload (which stays locked)
+            ctc: Number(row.ctc) || 0,
+            basic: Number(row.basic) || 0,
+            inHand: Number(row.inHand) || 0,
             locked: true,
             basicInfoLocked: true,
             positionLocked: true,
@@ -1041,12 +1100,12 @@ router.post('/upload-excel', auth, role(['Admin']), excelUpload.single('excel'),
             paymentLocked: true,
           };
 
-            // Remove empty bankDetails if paymentType is not 'Bank Transfer'
+          // Remove empty bankDetails if paymentType is not 'Bank Transfer'
           if (employeeData.paymentType !== 'Bank Transfer') {
             delete employeeData.bankDetails;
           }
 
-            // Save Employee
+          // Save Employee
           const employee = new Employee(employeeData);
           await employee.save();
           return { employeeId: employee.employeeId, _id: employee._id };
@@ -1103,12 +1162,10 @@ router.patch('/:id/emergency-leave-permission', auth, role(['Admin', 'HOD', 'CEO
 
     // Authorization checks
     if (req.user.role === 'HOD') {
-      // HOD can only toggle for non-HOD employees in their department
       if (employee.loginType !== 'Employee' || employee.department.toString() !== user.department.toString()) {
         return res.status(403).json({ message: 'Not authorized to toggle Emergency Leave permission for this employee' });
       }
     } else if (req.user.role === 'CEO') {
-      // CEO can only toggle for HODs
       if (employee.loginType !== 'HOD') {
         return res.status(400).json({ message: 'CEO can only toggle Emergency Leave permission for HODs' });
       }
@@ -1118,7 +1175,7 @@ router.patch('/:id/emergency-leave-permission', auth, role(['Admin', 'HOD', 'CEO
     employee.canApplyEmergencyLeave = !employee.canApplyEmergencyLeave;
     // Update lastEmergencyLeaveToggle if toggling to true
     if (employee.canApplyEmergencyLeave) {
-      employee.lastEmergencyLeaveToggle = new Date();
+      employee.lastEmergencyLeaveToggle = formatForDB(toIST(new Date()));
     } else {
       employee.lastEmergencyLeaveToggle = null;
     }
@@ -1127,7 +1184,6 @@ router.patch('/:id/emergency-leave-permission', auth, role(['Admin', 'HOD', 'CEO
 
     console.log(`Emergency Leave permission for employee ${employee.employeeId} toggled to: ${updatedEmployee.canApplyEmergencyLeave}`);
 
-    // Audit logging
     try {
       await Audit.create({
         action: 'toggle_emergency_leave_permission',
@@ -1138,7 +1194,8 @@ router.patch('/:id/emergency-leave-permission', auth, role(['Admin', 'HOD', 'CEO
       console.warn('Audit logging failed:', auditErr.message);
     }
 
-    res.json(populatedEmployee);
+    const formattedEmployee = formatEmployeeDates(populatedEmployee);
+    res.json(formattedEmployee);
   } catch (err) {
     console.error('Error toggling Emergency Leave permission:', err);
     res.status(500).json({ message: 'Server error', error: err.message });
@@ -1188,7 +1245,7 @@ router.post('/generate-letter', auth, role(['Admin']), async (req, res) => {
       mobileNumber: employee.mobileNumber || '',
       email: employee.email || '',
       designation: employee.designation || '',
-      dateOfJoining: employee.dateOfJoining ? moment.utc(employee.dateOfJoining).format('DD MMMM YYYY') : '',
+      dateOfJoining: employee.joiningDate ? formatForDisplay(employee.joiningDate, 'DD MMMM YYYY') : '',
       fatherName: employee.fatherName || '',
       aadharNumber: employee.aadharNumber || '',
       serviceAgreement: employee.serviceAgreement ? employee.serviceAgreement : '',

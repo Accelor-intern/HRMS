@@ -7,7 +7,11 @@ const otClaimSchema = new mongoose.Schema({
   department: { type: mongoose.Schema.Types.ObjectId, ref: 'Department', required: true },
   date: { type: Date, required: true },
   hours: { type: Number, required: true },
-  projectDetails: { type: String, required: true },
+
+  projectName: {type: String, required: true },
+  description: {type: String, required: true },
+
+  claimType: {type: String, enum: ['compensatory', 'overtime'], required: true },    
   compensatoryHours: { type: Number, default: 0 },
   paymentAmount: { type: Number, default: 0 },
   status: {
