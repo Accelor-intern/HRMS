@@ -10,6 +10,7 @@ import PunchMissed from '../models/PunchMissed.js';
 import auth from '../middleware/auth.js';
 import role from '../middleware/role.js';
 import { buildAttendanceData } from '../utils/attendanceUtils.js';
+import { toIST, formatForDB, formatForDisplay, startOfDay, endOfDay, now, parseDate, validateDate } from '../utils/dateUtils.js';
 const router = express.Router();
 
 // Get dashboard statistics
@@ -28,10 +29,10 @@ router.get('/stats', auth, role(['Admin', 'CEO', 'HOD']), async (req, res) => {
       console.log(`HOD departmentId: ${departmentId}`);
     }
 
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(today.getDate() + 1);
+    const today = toIST(new Date());
+    const tomorrow = toIST(today).add(1, 'day');
+    const todayStart = formatForDB(startOfDay(today));
+    const tomorrowStart = formatForDB(startOfDay(tomorrow));
 
     const employeeMatch = departmentId ? { department: departmentId, status: 'Working' } : { status: 'Working' };
     const employeeStats = await Employee.aggregate([
@@ -44,7 +45,7 @@ router.get('/stats', auth, role(['Admin', 'CEO', 'HOD']), async (req, res) => {
                 $and: [
                   { $eq: ['$employeeType', 'Probation'] },
                   { $ne: ['$confirmationDate', null] },
-                  { $lte: ['$confirmationDate', new Date()] },
+                  { $lte: ['$confirmationDate', formatForDB(now())] },
                 ],
               },
               then: 'Confirmed',
@@ -76,7 +77,7 @@ router.get('/stats', auth, role(['Admin', 'CEO', 'HOD']), async (req, res) => {
     });
 
     const attendanceMatch = {
-      logDate: { $gte: today, $lt: tomorrow },
+      logDate: { $gte: todayStart, $lt: tomorrowStart },
       status: 'Present',
     };
     if (departmentId) {
@@ -220,6 +221,7 @@ router.get('/employee-info', auth, role(['Employee', 'HOD', 'Admin']), async (re
       department: employee.department,
       designation: employee.designation,
       canApplyEmergencyLeave:employee.canApplyEmergencyLeave,
+      medicalLeaves: employee.medicalLeaves,
     });
   } catch (err) {
     console.error('Error fetching employee info:', err);
@@ -241,22 +243,26 @@ router.get('/employee-stats', auth, role(['Employee', 'HOD', 'Admin']), async (r
       return res.status(400).json({ message: 'Invalid attendanceView. Must be "daily", "monthly", or "yearly"' });
     }
 
-    const today = new Date();
-    const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-    const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
-    endOfMonth.setHours(23, 59, 59, 999);
-    const startOfYear = new Date(today.getFullYear(), 0, 1);
-    const endOfYear = new Date(today.getFullYear(), 11, 31);
-    endOfYear.setHours(23, 59, 59, 999);
+    const fromDateParsed = parseDate(fromDate);
+    const toDateParsed = parseDate(toDate);
+    if (!validateDate(fromDateParsed) || !validateDate(toDateParsed)) {
+      return res.status(400).json({ message: 'Invalid fromDate or toDate format' });
+    }
+
+    const today = toIST(new Date());
+    const startOfMonth = formatForDB(startOfDay(toIST(today).startOf('month')));
+    const endOfMonth = formatForDB(endOfDay(toIST(today).endOf('month')));
+    const startOfYear = formatForDB(startOfDay(toIST(today).startOf('year')));
+    const endOfYear = formatForDB(endOfDay(toIST(today).endOf('year')));
 
     const attendanceQuery = {
       employeeId,
-      logDate: { $gte: new Date(fromDate), $lte: new Date(toDate) },
+      logDate: { $gte: formatForDB(fromDateParsed), $lte: formatForDB(toDateParsed) },
       status: 'Present',
     };
     const attendanceRecords = await Attendance.find(attendanceQuery);
 
-    const attendanceData = buildAttendanceData(attendanceRecords, attendanceView, new Date(fromDate), new Date(toDate));
+    const attendanceData = buildAttendanceData(attendanceRecords, attendanceView, fromDateParsed.toDate(), toDateParsed.toDate());
 
     const employee = await Employee.findOne({ employeeId })
       .select('employeeType department compensatoryAvailable designation')
@@ -265,11 +271,9 @@ router.get('/employee-stats', auth, role(['Employee', 'HOD', 'Admin']), async (r
       return res.status(404).json({ message: 'Employee not found' });
     }
 
-    const normalizeDate = (date) => {
-      const d = new Date(date);
-      d.setHours(0, 0, 0, 0);
-      return d;
-    };
+    function normalizeDate(date) {
+      return formatForDB(date);
+    }
 
     let leaveDaysTaken = { monthly: 0, yearly: 0 };
     if (employee.employeeType === 'Confirmed') {
@@ -283,42 +287,19 @@ router.get('/employee-stats', auth, role(['Employee', 'HOD', 'Admin']), async (r
       const leavesThisMonth = await Leave.find({
         ...leaveQueryBase,
         'fullDay.from': { $gte: startOfMonth, $lte: endOfMonth }
-        // Original: Included halfDay.date
-        // $or: [
-        //   { 'fullDay.from': { $gte: startOfMonth, $lte: endOfMonth } },
-        //   { 'halfDay.date': { $gte: startOfMonth, $lte: endOfMonth } }
-        // ]
       });
       const leavesThisYear = await Leave.find({
         ...leaveQueryBase,
         'fullDay.from': { $gte: startOfYear, $lte: endOfYear }
-        // Original: Included halfDay.date
-        // $or: [
-        //   { 'fullDay.from': { $gte: startOfYear, $lte: endOfYear } },
-        //   { 'halfDay.date': { $gte: startOfYear, $lte: endOfYear } }
-        // ]
       });
 
       console.log(`Leaves this month for ${employeeId}:`, leavesThisMonth.map(l => ({
         _id: l._id,
         leaveType: l.leaveType,
         fullDay: l.fullDay
-        // Original: Included halfDay
-        // halfDay: l.halfDay
       })));
 
       const calculateDays = (leave) => {
-        // Original: Checked halfDay.date
-        // if (leave.halfDay && leave.halfDay.date) {
-        //   if (leave.fullDay && (leave.fullDay.from || leave.fullDay.to)) {
-        //     console.warn(`Leave ${leave._id} has both halfDay and fullDay for ${employeeId}`);
-        //     return 0.5;
-        //   }
-        //   console.log(`Leave ${leave._id}: 0.5 days (half-day)`);
-        //   return 0.5;
-        // }
-
-        // Updated: Check fullDay.fromDuration for half-day
         if (leave.fullDay.fromDuration === 'half' && leave.fullDay.from === leave.fullDay.to) {
           console.log(`Leave ${leave._id}: 0.5 days (half-day)`);
           return 0.5;
@@ -362,21 +343,12 @@ router.get('/employee-stats', auth, role(['Employee', 'HOD', 'Admin']), async (r
       employeeId,
       leaveType: 'Leave Without Pay(LWP)',
       'fullDay.from': { $gte: startOfMonth, $lte: endOfMonth },
-      // Original: Included halfDay.date
-      // $or: [
-      //   { 'fullDay.from': { $gte: startOfMonth, $lte: endOfMonth } },
-      //   { 'halfDay.date': { $gte: startOfMonth, $lte: endOfMonth } }
-      // ],
       'status.hod': 'Approved',
       'status.admin': 'Acknowledged',
       'status.ceo': 'Approved',
     };
     const unpaidLeavesRecords = await Leave.find(unpaidLeavesQuery);
     const unpaidLeavesTaken = unpaidLeavesRecords.reduce((total, leave) => {
-      // Original: Checked halfDay.date
-      // if (leave.halfDay && leave.halfDay.date) {
-      //   return total + 0.5;
-      // }
       if (leave.fullDay.fromDuration === 'half' && leave.fullDay.from === leave.fullDay.to) {
         return total + 0.5;
       }
@@ -392,6 +364,12 @@ router.get('/employee-stats', auth, role(['Employee', 'HOD', 'Admin']), async (r
     }, 0);
 
     const leaveRecords = await Leave.find({ employeeId }).sort({ createdAt: -1 }).limit(10);
+    const formattedLeaveRecords = leaveRecords.map(record => ({
+      ...record.toObject(),
+      createdAt: formatForDisplay(record.createdAt, 'YYYY-MM-DD HH:mm'),
+      'fullDay.from': record.fullDay?.from ? formatForDisplay(record.fullDay.from, 'YYYY-MM-DD') : undefined,
+      'fullDay.to': record.fullDay?.to ? formatForDisplay(record.fullDay.to, 'YYYY-MM-DD') : undefined
+    }));
 
     // Fetch OT claims (approved only)
     const otQuery = {
@@ -406,12 +384,17 @@ router.get('/employee-stats', auth, role(['Employee', 'HOD', 'Admin']), async (r
     const otClaimRecords = await OT.find({ employeeId })
       .sort({ createdAt: -1 })
       .limit(10);
+    const formattedOtClaimRecords = otClaimRecords.map(record => ({
+      ...record.toObject(),
+      createdAt: formatForDisplay(record.createdAt, 'YYYY-MM-DD HH:mm'),
+      date: formatForDisplay(record.date, 'YYYY-MM-DD')
+    }));
 
     // Fetch unclaimed and claimed OT entries from Attendance for eligible departments
     const eligibleDepartments = ['Production', 'Mechanical', 'AMETL'];
     const eligibleDesignations = ['Technician', 'Sr. Technician', 'Junior Engineer'];
     const isEligible = employee.department && eligibleDepartments.includes(employee.department.name) &&
-    eligibleDesignations.includes(employee.designation);
+      eligibleDesignations.includes(employee.designation);
 
     let unclaimedOTRecords = [];
     let claimedOTRecords = [];
@@ -419,22 +402,18 @@ router.get('/employee-stats', auth, role(['Employee', 'HOD', 'Admin']), async (r
     if (isEligible || employee.department) {
       const otAttendanceQuery = {
         employeeId,
-        logDate: { $gte: new Date(fromDate), $lte: new Date(toDate) },
-        ot: { $gt: 0 },
+        logDate: { $gte: formatForDB(fromDateParsed), $lte: formatForDB(toDateParsed) },
+        ot: { $gt: 59 },
       };
       const otAttendanceRecords = await Attendance.find(otAttendanceQuery).sort({ logDate: -1 });
 
       const otClaims = await OT.find({
         employeeId,
-        date: { $gte: new Date(fromDate), $lte: new Date(toDate) },
+        date: { $gte: formatForDB(fromDateParsed), $lte: formatForDB(toDateParsed) },
       });
 
       // Normalize dates for comparison
-      const normalizeOTDate = (date) => {
-        const d = new Date(date);
-        d.setHours(0, 0, 0, 0);
-        return d.getTime();
-      };
+      const normalizeOTDate = (date) => formatForDB(date);
 
       // Separate unclaimed and claimed OT
       unclaimedOTRecords = otAttendanceRecords
@@ -446,24 +425,22 @@ router.get('/employee-stats', auth, role(['Employee', 'HOD', 'Admin']), async (r
         .map((record) => {
           let deadline = null;
           if (isEligible) {
-            deadline = new Date(record.logDate);
-            deadline.setDate(deadline.getDate() + 1);
-            deadline.setHours(23, 59, 59, 999);
+            deadline = formatForDisplay(toIST(record.logDate).add(1, 'day').endOf('day'), 'YYYY-MM-DD HH:mm');
           }
           return {
             _id: record._id,
-            date: record.logDate,
+            date: formatForDisplay(record.logDate, 'YYYY-MM-DD'),
             hours: (record.ot / 60).toFixed(1),
-            day: new Date(record.logDate).toLocaleString('en-US', { weekday: 'long' }),
+            day: toIST(record.logDate).format('dddd'),
             claimDeadline: deadline,
           };
         });
 
       claimedOTRecords = otClaims.map((claim) => ({
         _id: claim._id,
-        date: claim.date,
+        date: formatForDisplay(claim.date, 'YYYY-MM-DD'),
         hours: claim.hours.toFixed(1),
-        day: new Date(claim.date).toLocaleString('en-US', { weekday: 'long' }),
+        day: toIST(claim.date).format('dddd'),
         status: {
           hod: claim.status.hod,
           admin: claim.status.admin,
@@ -480,7 +457,7 @@ router.get('/employee-stats', auth, role(['Employee', 'HOD', 'Admin']), async (r
       ? employee.compensatoryAvailable
           .filter((entry) => entry.status === 'Available')
           .map((entry) => ({
-            date: entry.date,
+            date: formatForDisplay(entry.date, 'YYYY-MM-DD'),
             hours: entry.hours,
             _id: entry._id || new mongoose.Types.ObjectId().toString(),
           }))
@@ -491,17 +468,23 @@ router.get('/employee-stats', auth, role(['Employee', 'HOD', 'Admin']), async (r
       .sort({ createdAt: -1 })
       .limit(10)
       .lean();
+    const formattedOdRecords = odRecords.map(record => ({
+      ...record,
+      createdAt: formatForDisplay(record.createdAt, 'YYYY-MM-DD HH:mm'),
+      dateOut: formatForDisplay(record.dateOut, 'YYYY-MM-DD'),
+      dateIn: formatForDisplay(record.dateIn, 'YYYY-MM-DD')
+    }));
 
     const stats = {
       attendanceData,
-      leaveRecords,
+      leaveRecords: formattedLeaveRecords,
       unpaidLeavesTaken,
       overtimeHours,
-      otClaimRecords,
+      otClaimRecords: formattedOtClaimRecords,
       unclaimedOTRecords,
       claimedOTRecords,
       compensatoryLeaveEntries,
-      odRecords,
+      odRecords: formattedOdRecords,
     };
 
     console.log(`Employee dashboard stats for ${employeeId}:`, stats);

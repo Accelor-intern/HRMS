@@ -4,6 +4,7 @@ import Leave from './Leave.js';
 import Audit from './Audit.js'; // Import Audit model for logging
 
 const employeeSchema = new mongoose.Schema({
+  // Basic Info
   employeeId: { type: String, unique: true },
   userId: { type: String, unique: true },
   email: { type: String, unique: true },
@@ -29,16 +30,10 @@ const employeeSchema = new mongoose.Schema({
   emergencyContactName: String,
   emergencyContactNumber: String,
   dateOfJoining: Date,
-  reportingManager: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee' },
   status: { type: String, enum: ['Working', 'Resigned'] },
   dateOfResigning: { 
     type: Date,
     required: function() { return this.status === 'Resigned'; } 
-  },
-  employeeType: { 
-    type: String, 
-    enum: ['Intern', 'Confirmed', 'Contractual', 'Probation', 'Apprentice', 'OJT'],
-    required: function() { return this.status === 'Working'; }
   },
   probationPeriod: { 
     type: Number,
@@ -53,18 +48,35 @@ const employeeSchema = new mongoose.Schema({
     required: function() { return this.status === 'Working' && this.employeeType === 'OJT'; }
   },
   referredBy: String,
+
+  // Employment Details
   loginType: { type: String, enum: ['Employee', 'HOD', 'Admin', 'CEO'] },
-  designation: String,
-  location: String,
+  designation: { type: String, required: true },
+  location: { type: String },
   department: { type: mongoose.Schema.Types.ObjectId, ref: 'Department' },
+  reportingManager: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee' },
+  employeeType: { 
+    type: String, 
+    enum: ['Intern', 'Confirmed', 'Contractual', 'Probation', 'Apprentice', 'OJT'],
+    required: function() { return this.status === 'Working'; }
+  },
+
+  // Statutory Details
   panNumber: { type: String, match: /^[A-Z0-9]{10}$/ },
   pfNumber: { type: String, match: /^\d{18}$/, sparse: true },
   uanNumber: { type: String, match: /^\d{12}$/, sparse: true },
   esiNumber: { type: String, match: /^\d{12}$/, sparse: true },
+
+  // Documents
   profilePicture: { type: mongoose.Schema.Types.ObjectId, ref: 'Uploads.files' },
   documents: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Uploads.files' }],
-  paymentType: { type: String, enum: ['Cash', 'Bank Transfer'] },
+
+  // Bank Details
   bankDetails: {
+    paymentType: { 
+      type: String, 
+      enum: ['Cash', 'Bank Transfer'] 
+    },
     bankName: { 
       type: String,
       required: function() { return this.paymentType === 'Bank Transfer'; } 
@@ -82,16 +94,22 @@ const employeeSchema = new mongoose.Schema({
       required: function() { return this.paymentType === 'Bank Transfer'; } 
     },
   },
+
+  // Payment Details
   ctc: { type: Number, required: true },
   basic: { type: Number, required: true },
   inHand: { type: Number, required: true },
+
+  //Locks
   locked: { type: Boolean, default: true },
   basicInfoLocked: { type: Boolean, default: true },
   positionLocked: { type: Boolean, default: true },
   statutoryLocked: { type: Boolean, default: true },
   documentsLocked: { type: Boolean, default: true },
   paymentLocked: { type: Boolean, default: true },
-  paidLeaves: { type: Number, default: 0 }, // Tracks Casual leaves only
+
+  //Leave Counts
+  paidLeaves: { type: Number, default: 0 }, // Tracks Casual leaves     only
   medicalLeaves: { type: Number, default: 0 }, // Tracks Medical leaves (7 per year for Confirmed only)
   maternityClaims: { type: Number, default: 0 }, // Tracks Maternity leave claims (max 2 for Confirmed only)
   paternityClaims: { type: Number, default: 0 }, // Tracks Paternity leave claims (max 2 for Confirmed only)
@@ -109,6 +127,8 @@ const employeeSchema = new mongoose.Schema({
   lastRestrictedHolidayReset: { type: Date }, // For Restricted Holiday
   canApplyEmergencyLeave: { type: Boolean, default: false }, // Permission for Emergency Leave
   lastEmergencyLeaveToggle: { type: Date }, // Tracks when canApplyEmergencyLeave was last set to true
+
+  //Attendance
   lastPunchMissedSubmission: { type: Date }, // Tracks last Punch Missed Form submission
   attendanceHistory: [{ // New field for attendance history
     date: { type: Date, required: true },

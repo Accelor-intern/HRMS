@@ -39,8 +39,9 @@ const ProfileScreen = ({ navigation }) => {
 
     try {
       const res = await api.get(`/employees/${user.id}`);
-      setProfile({ ...res.data, statutoryDetails: res.data.statutoryDetails || {}});
-      setIsLocked(res.data.locked || true);
+      setProfile({ ...res.data });
+      setIsLocked(res.data.locked || false);
+      console.log('Profile fetched successfully:', JSON.stringify(res.data, null, 2));
     } catch (err) {
       console.error('Failed to fetch profile:', err);
       Alert.alert('Error', 'Failed to load profile');
@@ -61,7 +62,8 @@ const ProfileScreen = ({ navigation }) => {
         [parent]: { ...prev[parent], [child]: value }
       }));
     } else {
-      setProfile(prev => ({ ...prev, [field]: value }));
+      setProfile(prev => ({ ...prev, [field]: value }))
+      console.log(`change ${field} to ${value}`);
     }
     setErrors(prev => ({ ...prev, [field]: null }));
   };
@@ -99,11 +101,19 @@ const ProfileScreen = ({ navigation }) => {
     if (profile.maritalStatus === 'Married' && !profile.spouseName?.trim()) {
       newErrors.spouseName = 'Spouse name is required when married';
     }
-    
+
     if (profile.status === 'Resigned' && !profile.dateOfResigning?.trim()) {
       newErrors.dateOfResigning = 'Date of resigning is required';
     }
-    
+
+    // PAN number validation (10 alphanumeric characters, uppercase)
+    if (profile.panNumber) {
+      const panNumber = profile.panNumber.trim().toUpperCase();
+      if (!/^[A-Z0-9]{10}$/.test(panNumber)) {
+      newErrors.panNumber = 'PAN Number must be 10 alphanumeric characters (e.g., ABCDE1234F)';
+      }
+    }
+
     if (profile.status === 'Working') {
       if (!profile.employeeType?.trim()) {
         newErrors.employeeType = 'Employee type is required';
@@ -123,35 +133,163 @@ const ProfileScreen = ({ navigation }) => {
       return;
     }
 
-    const formData = new FormData();
-    Object.entries(profile).forEach(([key, value]) => {
-      if (typeof value === 'object' && value !== null) {
-        formData.append(key, JSON.stringify(value));
+    // Create a clean data object with only the fields we want to send
+    const cleanData = {};
+
+    // List of fields we want to include in the update
+    const allowedFields = [
+      'name', 'mobileNumber', 'email', 'dateOfBirth', 'fatherName', 'motherName',
+      'spouseName', 'gender', 'maritalStatus', 'bloodGroup', 'aadharNumber',
+      'panNumber','pfNumber','esicNumber', 'uanNumber', 'permanentAddress', 'currentAddress', 'emergencyContactName',
+      'emergencyContactNumber', 'dateOfJoining', 'dateOfResigning', 'status',
+      'employeeType', 'probationPeriod', 'confirmationDate', 'designation',
+      'reportingManager', 'location', 'referredBy', 'basicInfoLocked',
+      'documentsLocked', 'paymentLocked', 'statutoryLocked', 'positionLocked',
+      'department'
+    ];
+
+    // Only include allowed fields and handle special cases
+    allowedFields.forEach(field => {
+      if (profile[field] === undefined || profile[field] === null || profile[field] === '') {
+        return; // Skip undefined, null, or empty string values
+      }
+
+      // Handle date fields - ensure they're valid dates
+      if ((field === 'dateOfBirth' || field === 'dateOfJoining' || field === 'dateOfResigning' || field === 'confirmationDate') && profile[field]) {
+        const date = new Date(profile[field]);
+        if (!isNaN(date.getTime())) {
+          cleanData[field] = date.toISOString().split('T')[0]; // Format as YYYY-MM-DD
+        }
+        return;
+      }
+      
+      // Handle department and reportingManager specially - extract just the ID if it's an object
+      if (field === 'department' || field === 'reportingManager') {
+        // Skip if reportingManager is an empty string
+        if (field === 'reportingManager' && profile[field] === '') {
+          return;
+        }
+        
+        if (typeof profile[field] === 'object' && profile[field] !== null) {
+          cleanData[field] = profile[field]._id || profile[field];
+        } else if (typeof profile[field] === 'string' && profile[field].includes('_id')) {
+          // If it's a string that looks like it might be JSON, try to parse it
+          try {
+            const parsed = JSON.parse(profile[field]);
+            cleanData[field] = parsed._id || parsed;
+          } catch (e) {
+            // If parsing fails, use the value as is if it's not empty
+            if (profile[field].trim() !== '') {
+              cleanData[field] = profile[field];
+            }
+          }
+        } else if (profile[field].trim() !== '') {
+          cleanData[field] = profile[field];
+        }
       } else {
-        formData.append(key, value);
+        cleanData[field] = profile[field];
       }
     });
 
+    // Create form data and append the clean data
+    const formData = new FormData();
+
+    // Append all clean data fields
+    Object.entries(cleanData).forEach(([key, value]) => {
+      if (value !== undefined && value !== null) {
+        // Handle nested objects (like department)
+        if (typeof value === 'object' && value !== null && !(value instanceof File)) {
+          formData.append(key, JSON.stringify(value));
+        } else {
+          formData.append(key, value);
+        }
+      }
+    });
+    // Append each field individually for bankDetails
+    if (profile.bankDetails) {
+      Object.entries(profile.bankDetails).forEach(([key, value]) => {
+        if (value !== undefined && value !== null) {
+          formData.append(`bankDetails[${key}]`, value);
+        }
+      });
+    }
+
+    // Append each field individually for statutoryDetails
+    if (profile.statutoryDetails) {
+      Object.entries(profile.statutoryDetails).forEach(([key, value]) => {
+        if (typeof value === 'object' && value !== null && !(value instanceof File)) {
+          formData.append(key, JSON.stringify(value));
+        } else {
+          formData.append(key, value);
+        }
+      });
+    }
+
+    // Append files if any
     Object.entries(files).forEach(([key, file]) => {
       if (file) {
-        formData.append(key, {
+        const fileInfo = {
           uri: file.uri,
           type: file.mimeType || 'image/jpeg',
-          name: file.name || `file-${Date.now()}`
-        });
+          name: file.name || `file-${Date.now()}.jpg`
+        };
+        formData.append(key, fileInfo);
       }
     });
 
     try {
-      const res = await api.put(`/employees/${user.id}`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
-      });
+      console.log('Sending profile update request...');
+      console.log('URL:', `/employees/${user.id}`);
+
+      // Log form data for debugging
+      const formDataObj = {};
+      for (let [key, value] of formData._parts) {
+        formDataObj[key] = value;
+      }
+      console.log('Form data:', JSON.stringify(formDataObj, null, 2));
+
+      const config = {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+          'Accept': 'application/json',
+        },
+        timeout: 30000, // 30 seconds timeout
+      };
+
+      const res = await api.put(`/employees/${user.id}`, formData, config);
+
+      console.log('Update successful:', res.data);
       Alert.alert('Success', res.data.message || 'Profile updated successfully');
     } catch (err) {
-      console.error('Profile update error:', err);
-      const errorMessage = err.response?.data?.message || err.message || 'Failed to update profile';
+      console.error('Profile update error:', {
+        message: err.message,
+        code: err.code,
+        response: {
+          status: err.response?.status,
+          statusText: err.response?.statusText,
+          data: err.response?.data
+        },
+        config: {
+          url: err.config?.url,
+          method: err.config?.method,
+          headers: err.config?.headers
+        }
+      });
+
+      let errorMessage = 'Failed to update profile';
+
+      if (err.code === 'ECONNABORTED') {
+        errorMessage = 'Request timed out. Please check your internet connection and try again.';
+      } else if (err.message === 'Network Error') {
+        errorMessage = 'Unable to connect to the server. Please check your internet connection.';
+      } else if (err.response?.data?.message) {
+        errorMessage = err.response.data.message;
+      } else if (err.message) {
+        errorMessage = err.message;
+      }
+
       Alert.alert('Error', errorMessage);
-      
+
       // If there are validation errors from the server, update the errors state
       if (err.response?.data?.errors) {
         setErrors(prev => ({
@@ -166,7 +304,7 @@ const ProfileScreen = ({ navigation }) => {
   if (!profile) return null;
 
   // Common props for all sections
-  
+
   const commonProps = {
     profile,
     errors,
@@ -198,19 +336,19 @@ const ProfileScreen = ({ navigation }) => {
             />
           )}
         </Tab.Screen>
-        
+
         <Tab.Screen name="Employment">
           {() => <EmploymentDetailsSection {...commonProps} />}
         </Tab.Screen>
-        
+
         <Tab.Screen name="Bank">
           {() => <BankDetailsSection {...commonProps} />}
         </Tab.Screen>
-        
+
         <Tab.Screen name="Statutory">
           {() => <StatutoryDetailsSection {...commonProps} />}
         </Tab.Screen>
-        
+
         <Tab.Screen name="Documents">
           {() => (
             <DocumentUploadSection
@@ -222,7 +360,7 @@ const ProfileScreen = ({ navigation }) => {
           )}
         </Tab.Screen>
       </Tab.Navigator>
-      
+
       {/* Save button fixed at the bottom */}
       <View style={styles.saveButtonContainer}>
         <TouchableOpacity

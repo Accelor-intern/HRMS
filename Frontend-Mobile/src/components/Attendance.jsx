@@ -15,6 +15,13 @@ import { Button as RNButton } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { AuthContext } from '../context/AuthContext';
 import api from '../services/api';
+import {
+  formatForDisplay,
+  formatTimeForDisplay,
+  getCurrentISTDate,
+  formatForBackend,
+  parseDateFromBackend,
+} from '../utils/dateUtils';
 
 function Attendance() {
     const { user } = useContext(AuthContext);
@@ -32,11 +39,11 @@ function Attendance() {
     const [filters, setFilters] = useState({
         employeeId: '',
         departmentId: user?.department?._id || '',
-        fromDate: new Date().toISOString().split('T')[0],
-        toDate: new Date().toISOString().split('T')[0],
+        fromDate: formatForBackend(getCurrentISTDate()), // Initialize as IST
+        toDate: formatForBackend(getCurrentISTDate()), // Initialize as IST
         status: 'all',
     });
-    const [employeeFilter, setEmployeeFilter] = useState('');
+    const [employeeNameFilter, setEmployeeNameFilter] = useState('');
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
     const [currentPage, setCurrentPage] = useState(1);
@@ -63,8 +70,6 @@ function Attendance() {
             if (firstDept?.name) {
                 console.log('Setting department name to:', firstDept.name);
                 setDepartmentName(firstDept.name);
-                // The actual department name will be available after the next render
-                // We'll add a separate effect to log when it changes
             }
 
             return departments;
@@ -86,25 +91,26 @@ function Attendance() {
     const fetchAttendance = useCallback(async () => {
         setLoading(true);
         try {
-
+            // Build the base params
             const params = {
                 fromDate: filters.fromDate || '',
                 toDate: filters.toDate || '',
+                // Always include departmentId for HODs
+                ...(user?.loginType === 'HOD' && { departmentId: user?.department?._id || filters.departmentId }),
                 // Only include status in params if it's not 'all' and not empty
                 ...(filters.status && filters.status !== 'all' && { status: filters.status }),
             };
 
+            // Add employee name filter if provided
+            if (employeeNameFilter) {
+                params.employeeName = employeeNameFilter.trim();
+            }
+
             console.log('Fetching attendance with filters:', JSON.stringify(params, null, 2));
 
-            if (user?.loginType === 'HOD') {
-                if (employeeFilter) {
-                    params.employeeId = employeeFilter;
-                } else {
-                    params.departmentId = user?.department?._id || filters.departmentId;
-                }
-            } else if (user?.employeeId) {
+            if (user?.loginType !== 'HOD' && user?.employeeId) {
                 params.employeeId = user.employeeId;
-            } else {
+            } else if (user?.loginType !== 'HOD') {
                 setError('User ID not available');
                 setLoading(false);
                 return;
@@ -131,7 +137,7 @@ function Attendance() {
         } finally {
             setLoading(false);
         }
-    }, [user, filters, employeeFilter]);
+    }, [user, filters, employeeNameFilter]);
 
     // Separate useEffect for initial setup
     useEffect(() => {
@@ -140,7 +146,7 @@ function Attendance() {
                 setFilters(prev => ({ ...prev, employeeId: user.employeeId }));
             }
             if (user?.loginType === 'HOD') {
-                if (user?.loginType === 'HOD' && user?.department?._id) {
+                if (user?.department?._id) {
                     setFilters(prev => ({
                         ...prev,
                         departmentId: user.department._id
@@ -167,12 +173,12 @@ function Attendance() {
         setupUserData();
     }, [user?.loginType, user?.employeeId, user?.department?._id]);
 
-    // Separate useEffect for fetching attendance
+    // Initial data load
     useEffect(() => {
         if (user) {
             fetchAttendance();
         }
-    }, [user, filters, employeeFilter]);
+    }, [user]);
 
     const handleDateChange = useCallback((event, selectedDate, field) => {
         if (Platform.OS === 'android') {
@@ -180,7 +186,7 @@ function Attendance() {
             if (event.type === 'dismissed' || !selectedDate || isNaN(selectedDate)) {
                 return;
             }
-            const formattedDate = selectedDate.toISOString().split('T')[0];
+            const formattedDate = formatForBackend(selectedDate); // Format as IST YYYY-MM-DD
             const update = { [field]: formattedDate };
             if (field === 'fromDate' && !filters.toDate) {
                 update.toDate = formattedDate;
@@ -189,7 +195,7 @@ function Attendance() {
             return;
         }
         if (!selectedDate || isNaN(selectedDate)) return;
-        const formattedDate = selectedDate.toISOString().split('T')[0];
+        const formattedDate = formatForBackend(selectedDate); // Format as IST YYYY-MM-DD
         const update = { [field]: formattedDate };
         if (field === 'fromDate' && !filters.toDate) {
             update.toDate = formattedDate;
@@ -201,15 +207,50 @@ function Attendance() {
         setFilters(prev => ({ ...prev, [name]: value }));
     }, []);
 
-    const handleFilter = useCallback(() => {
-        console.log('Applying filters:', filters);
-        if (filters.fromDate && !filters.toDate) {
-            console.log('Setting toDate same as fromDate');
-            setFilters(prev => ({ ...prev, toDate: filters.fromDate }));
+    const handleFilter = useCallback(async () => {
+        try {
+            console.log('Applying filters:', filters);
+            // Update toDate if only fromDate is provided
+            let updatedFilters = { ...filters };
+            if (filters.fromDate && !filters.toDate) {
+                console.log('Setting toDate same as fromDate');
+                updatedFilters.toDate = filters.fromDate;
+                setFilters(prev => ({ ...prev, toDate: filters.fromDate }));
+            }
+            
+            setCurrentPage(1); // Reset to first page when filters change
+            setLoading(true);
+            
+            // Prepare params with current filters
+            const params = {
+                fromDate: updatedFilters.fromDate || '',
+                toDate: updatedFilters.toDate || '',
+                ...(updatedFilters.status && updatedFilters.status !== 'all' && { status: updatedFilters.status }),
+                ...(employeeNameFilter && { employeeName: employeeNameFilter.trim() }),
+                ...(updatedFilters.departmentId && { departmentId: updatedFilters.departmentId })
+            };
+
+            console.log('Fetching attendance with params:', params);
+            const response = await api.get('/attendance', { params });
+            
+            if (!response.data || !Array.isArray(response.data.attendance)) {
+                throw new Error('Invalid attendance data received');
+            }
+            
+            setAttendance(response.data.attendance);
+            setError(null);
+        } catch (err) {
+            console.error('Error applying filters:', err);
+            if (err.response?.status === 403) {
+                setAttendance([]);
+                setError('No matching employees found in your department');
+            } else {
+                setError(err.response?.data?.message || 'Failed to apply filters');
+            }
+        } finally {
+            setLoading(false);
         }
-        setCurrentPage(1); // Reset to first page when filters change
-        fetchAttendance();
-    }, [filters, fetchAttendance]);
+    }, [filters, employeeNameFilter]);
 
     const handlePreviousPage = useCallback(() => {
         console.log('Previous button pressed', { currentPage });
@@ -232,31 +273,29 @@ function Attendance() {
                 console.log('Setting page to:', prevPage + 1);
                 return prevPage + 1;
             });
-        } else {
-            console.log('Cannot go to next page - already on last page');
         }
     }, [currentPage, totalPages, attendance.length]);
-
-    const formatTime = useCallback((minutes) => {
-        if (!minutes) return '00:00';
-        const hours = Math.floor(minutes / 60);
-        const mins = minutes % 60;
-        return `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`;
-    }, []);
 
     const renderItem = useCallback(({ item }) => (
         <Card style={styles.card}>
             <Card.Content>
                 <Text style={styles.cardTitle}>{item.name || 'Unknown'}</Text>
                 <Text>Employee ID: {item.employeeId || 'N/A'}</Text>
-                <Text>Date: {item.logDate ? new Date(item.logDate).toLocaleDateString() : 'N/A'}</Text>
-                <Text>Time In: {item.timeIn || '-'}</Text>
-                <Text>Time Out: {item.timeOut || '-'}</Text>
+                <Text>Date: {item.logDate ? formatForDisplay(item.logDate) : 'N/A'}</Text>
+                <Text>Time In: {item.timeIn ? formatTimeForDisplay(parseDateFromBackend(item.logDate).set({
+                    hour: parseInt(item.timeIn.split(':')[0]),
+                    minute: parseInt(item.timeIn.split(':')[1]),
+                    second: parseInt(item.timeIn.split(':')[2] || 0),
+                })) : '-'}</Text>
+                <Text>Time Out: {item.timeOut ? formatTimeForDisplay(parseDateFromBackend(item.logDate).set({
+                    hour: parseInt(item.timeOut.split(':')[0]),
+                    minute: parseInt(item.timeOut.split(':')[1]),
+                    second: parseInt(item.timeOut.split(':')[2] || 0),
+                })) : '-'}</Text>
                 <Text>Status: {item.status || 'N/A'}{item.halfDay ? ` (${item.halfDay})` : ''}</Text>
-                <Text>OT: {formatTime(item.ot || 0)}</Text>
             </Card.Content>
         </Card>
-    ), [formatTime]);
+    ), []);
 
     const hodDepartmentName = user?.loginType === 'HOD'
         ? departmentName || 'N/A'
@@ -283,21 +322,23 @@ function Attendance() {
             <FlatList
                 data={paginatedAttendance}
                 renderItem={renderItem}
-                keyExtractor={(item, index) => item._id ? item._id : `${item.employeeId}-${item.logDate}-${index}`}
+                keyExtractor={(item, index) => item._id ? item._id : `${
+                    item.employeeId}-${formatForBackend(item.logDate)}-${index}`}
                 contentContainerStyle={styles.list}
                 ListHeaderComponent={
                     <View style={styles.filterContainer}>
                         {user?.loginType === 'HOD' && (
                             <View style={styles.employeeFilterContainer}>
-                                <Text style={styles.filterLabel}>Employee ID:</Text>
+                                <Text style={styles.filterLabel}>Employee Name:</Text>
                                 <TextInput
                                     style={styles.employeeInput}
-                                    placeholder="Filter by Employee ID"
-                                    value={employeeFilter}
-                                    onChangeText={setEmployeeFilter}
+                                    placeholder="Search by employee name"
+                                    value={employeeNameFilter}
+                                    onChangeText={setEmployeeNameFilter}
                                     onSubmitEditing={fetchAttendance}
-                                    keyboardType="numeric"
-                                    accessibilityLabel="Employee ID Filter"
+                                    keyboardType="default"
+                                    autoCapitalize="words"
+                                    accessibilityLabel="Employee Name Filter"
                                 />
                             </View>
                         )}
@@ -309,7 +350,6 @@ function Attendance() {
                         )}
                         
                         <View style={styles.statusFilterContainer}>
-
                             <Text style={styles.filterLabel}>Status:</Text>
                             <View style={styles.pickerContainer}>
                                 <Picker
@@ -339,7 +379,7 @@ function Attendance() {
                             {showDatePicker.from && (
                                 <View>
                                     <DateTimePicker
-                                        value={new Date(filters.fromDate || new Date())}
+                                        value={parseDateFromBackend(filters.fromDate) || getCurrentISTDate().toDate()}
                                         mode="date"
                                         display={Platform.OS === 'ios' ? 'spinner' : 'default'}
                                         onChange={(event, date) => handleDateChange(event, date, 'fromDate')}
@@ -366,7 +406,7 @@ function Attendance() {
                             {showDatePicker.to && (
                                 <View>
                                     <DateTimePicker
-                                        value={new Date(filters.toDate || new Date())}
+                                        value={parseDateFromBackend(filters.toDate) || getCurrentISTDate().toDate()}
                                         mode="date"
                                         display={Platform.OS === 'ios' ? 'spinner' : 'default'}
                                         onChange={(event, date) => handleDateChange(event, date, 'toDate')}
@@ -410,7 +450,7 @@ function Attendance() {
                         </View>
                         <View style={styles.individual}>
                             <RNButton
-                                title={`Next`}
+                                title="Next"
                                 onPress={handleNextPage}
                                 disabled={currentPage >= totalPages || attendance.length === 0}
                                 accessibilityLabel="Next Page"
@@ -488,14 +528,12 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         marginBottom: 12,
-
     },
     filterLabel: {
         marginRight: 8,
         minWidth: 100,
         fontWeight: 'bold',
         paddingLeft: 10,
-
     },
     departmentText: {
         flex: 1,

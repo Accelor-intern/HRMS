@@ -5,8 +5,8 @@ import Employee from '../models/Employee.js';
 import SyncMetadata from '../models/SyncMetadata.js';
 import Leave from '../models/Leave.js';
 
-
-let direction = true;
+// Toggle variable for direction
+let directionToggle = true;
 
 const syncAttendance = async () => {
   try {
@@ -50,6 +50,7 @@ const syncAttendance = async () => {
       );
       return;
     }
+
     // Step 3: Normalize and deduplicate logs
     let punchLogs = records.map((log) => {
       let logTime = log.LogTime;
@@ -65,12 +66,12 @@ const syncAttendance = async () => {
         console.warn(`⚠️ Invalid LogTime format for UserID: ${log.UserID}`, log.LogTime);
         return null;
       }
-      
+
       return {
         UserID: log.UserID?.toString().trim(),
         LogDate: new Date(new Date(log.LogDate).toLocaleString('en-US', { timeZone: 'Asia/Kolkata' })),
         LogTime: logTime,
-        Direction: log.Direction ? log.Direction.toLowerCase(): (Direction != Direction) ? 'in': 'out',
+        Direction: log.Direction ? log.Direction.toLowerCase() : (directionToggle = !directionToggle) ? 'in' : 'out',
         processed: false,
       };
     }).filter((log) => log && log.UserID && log.LogTime && !isNaN(log.LogDate));
@@ -140,24 +141,25 @@ const syncAttendance = async () => {
 
       const leave = await Leave.findOne({
         employeeId: employee.employeeId,
-        'halfDay.date': logDate,
-        'status.ceo': 'Approved',
+        'fullDay.from': logDate,
+        'status.ceo': { $in: ['Pending', 'Approved'] },
+        'status.hod': { $in: ['Pending', 'Approved'] },
       });
 
-      if (leave && leave.halfDay.session === 'forenoon') {
+      if (leave && leave.fullDay.fromSession === 'forenoon') {
         const afternoonPunch = logs.find(log => log.LogTime >= '13:30:00');
         if (afternoonPunch) {
           timeIn = afternoonPunch.LogTime;
           status = 'Half Day';
-          halfDay = 'Second Half';
+          halfDay = 'First Half';
         } else {
           continue;
         }
-      } else if (leave && leave.halfDay.session === 'afternoon') {
+      } else if (leave && leave.fullDay.fromSession === 'afternoon') {
         const morningPunch = logs.find(log => log.LogTime <= '13:30:00');
         if (morningPunch) {
           status = 'Half Day';
-          halfDay = 'First Half';
+          halfDay = 'Second Half';
         } else {
           continue;
         }

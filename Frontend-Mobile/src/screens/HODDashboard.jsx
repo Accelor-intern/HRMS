@@ -120,9 +120,6 @@ const HODDashboard = () => {
         }}
       />
 
-
-
-
       <Drawer.Screen
         name="My Profile"
         component={Profile}
@@ -194,6 +191,7 @@ const HODDashboard = () => {
           )
         }}
       />
+      
       <Drawer.Screen
         name="OD Requests"
         component={ODRequests}
@@ -225,6 +223,7 @@ const HODDashboard = () => {
           )
         }}
       />)}
+
       <Drawer.Screen
         name="Employee List"
         component={EmployeeList}
@@ -239,7 +238,6 @@ const HODDashboard = () => {
           )
         }}
       />
-
 
     </Drawer.Navigator>
   );

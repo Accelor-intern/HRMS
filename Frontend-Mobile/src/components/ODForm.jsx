@@ -77,11 +77,11 @@ function ODForm() {
         }
     }, [user]);
 
-    const getFinalStatus = (status) => {
+    const getFinalStatus = (status, loginType) => {
         if (!status) return 'Pending';
         if (status.hod === 'Rejected' || status.ceo === 'Rejected') return 'Rejected';
         if (status.ceo === 'Approved') return 'Approved';
-        if (status.hod === 'Approved') return 'Approved by HOD';
+        if (status.hod === 'Approved') return loginType === 'HOD' ? 'Pending' : 'Approved by HOD';
         return 'Pending';
     };
 
@@ -102,13 +102,21 @@ function ODForm() {
 
     const onDateChange = (event, selectedDate, field) => {
         const currentDate = selectedDate || form[field];
+        
         if (Platform.OS === 'android') {
             setShowDatePicker(prev => ({
                 ...prev,
                 [field]: false
             }));
         }
-        handleChange(field, currentDate);  // This was outside the if block
+
+        // Update the field that was changed
+        handleChange(field, currentDate);
+
+        // If dateOut is being updated and it's after the current dateIn, update dateIn to match
+        if (field === 'dateOut' && form.dateIn && currentDate > form.dateIn) {
+            handleChange('dateIn', currentDate);
+        }
     };
 
     const validateForm = () => {
@@ -289,7 +297,8 @@ function ODForm() {
                                 <DateTimePicker
                                     value={form.dateIn}
                                     mode="date"
-                                    display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                                    display={Platform.OS === 'ios' ? 'spinner' : 'default'} 
+                                    minimumDate={form.dateOut ? new Date(form.dateOut) : new Date()}
                                     onChange={(event, date) => onDateChange(event, date, 'dateIn')}
                                 />
                                 {Platform.OS === 'ios' && (
@@ -393,7 +402,7 @@ function ODForm() {
                                 odRecords.map((record) => {
                                     const dateOut = record.dateOut ? new Date(record.dateOut) : null;
                                     const dateIn = record.dateIn ? new Date(record.dateIn) : null;
-                                    const status = getFinalStatus(record.status);
+                                    const status = getFinalStatus(record.status, user.loginType);
                                     return (
                                         <View key={record._id} style={styles.row}>
                                             <Text style={[styles.cell, { flex: 2 }]}>
