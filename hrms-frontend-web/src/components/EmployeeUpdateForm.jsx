@@ -1047,7 +1047,7 @@ function EmployeeUpdateForm({ employee, onUpdate }) {
           console.log('Opening dialog for employee:', employee.employeeId);
           setIsOpen(true);
         }}
-        className="bg-green-600 hover:bg-green-700"
+        className="bg-purple-600 hover:bg-green-700"
       >
         Update
       </Button>

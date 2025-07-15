@@ -1,10 +1,4 @@
-import React, {
-  useEffect,
-  useState,
-  useContext,
-  useCallback,
-  useMemo,
-} from "react";
+import React, { useEffect, useState, useContext, useCallback, useMemo } from "react";
 import { motion } from "framer-motion";
 import { AuthContext } from "../context/AuthContext";
 import api from "../services/api";
@@ -29,12 +23,20 @@ import {
   SelectItem,
   SelectValue,
 } from "../components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "../components/ui/dialog";
 
 function Attendance() {
   const { user } = useContext(AuthContext);
   const initialFilters = useMemo(
     () => ({
       employeeId: user?.loginType === "Employee" ? user?.employeeId || "" : "",
+      name: "",
       departmentId:
         user?.loginType === "HOD" && user?.department
           ? user.department._id
@@ -54,6 +56,16 @@ function Attendance() {
   const [itemsPerPage, setItemsPerPage] = useState(10);
   const [total, setTotal] = useState(0);
   const [absenceAlerts, setAbsenceAlerts] = useState({});
+  const [apologizeOpen, setApologizeOpen] = useState(false);
+  const [selectedRecord, setSelectedRecord] = useState(null);
+  const [employeeRoles, setEmployeeRoles] = useState({});
+  const [reason, setReason] = useState("");
+  const [approvalOpen, setApprovalOpen] = useState(false);
+  const [rejectionOpen, setRejectionOpen] = useState(false);
+  const [approvalReason, setApprovalReason] = useState("");
+  const [rejectionReason, setRejectionReason] = useState("");
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [apologyCounts, setApologyCounts] = useState({});
 
   const fetchDepartments = useCallback(async () => {
     try {
@@ -67,13 +79,12 @@ function Attendance() {
 
   const formatDateDisplay = (dateStr) => {
     const dateUTC = new Date(dateStr);
-    // Convert UTC to IST by adding 5.5 hours (5.5 * 60 * 60 * 1000 ms)
-    const dateIST = new Date(dateUTC.getTime() + (5.5 * 60 * 60 * 1000));
+    const dateIST = new Date(dateUTC.getTime() + 5.5 * 60 * 60 * 1000);
     return dateIST.toLocaleDateString("en-GB", {
       day: "2-digit",
       month: "2-digit",
       year: "numeric",
-    }); // Returns e.g., 18/06/2025
+    });
   };
 
   const fetchAttendance = useCallback(async (filterParams) => {
@@ -87,8 +98,7 @@ function Attendance() {
       if (
         normalizedFilters.fromDate &&
         normalizedFilters.toDate &&
-        new Date(normalizedFilters.toDate) <
-          new Date(normalizedFilters.fromDate)
+        new Date(normalizedFilters.toDate) < new Date(normalizedFilters.fromDate)
       ) {
         setError("To Date cannot be earlier than From Date.");
         setLoading(false);
@@ -102,7 +112,6 @@ function Attendance() {
       setAttendance(attendanceData);
       setTotal(res.data.total || 0);
 
-      // Fetch absence alerts for admin
       if (user?.loginType === "Admin") {
         const alertsRes = await api.get("/attendance/absence-alerts");
         const alerts = alertsRes.data.reduce((acc, alert) => {
@@ -112,29 +121,32 @@ function Attendance() {
         setAbsenceAlerts(alerts);
       }
 
-      // Log duplicates for debugging
+      // Fetch apology counts for the current month
+      const currentMonth = new Date().toISOString().slice(0, 7); // YYYY-MM
+      const countsRes = await api.get("/attendance/apology-counts", {
+        params: { month: currentMonth },
+      });
+      setApologyCounts(countsRes.data);
+
       const keyCounts = {};
       attendanceData.forEach((record) => {
-        const key = `${record.employeeId}-${new Date(record.logDate).toISOString().split('T')[0]}`;
+        const key = `${record.employeeId}-${new Date(record.logDate).toISOString().split("T")[0]}`;
         keyCounts[key] = (keyCounts[key] || 0) + 1;
         if (keyCounts[key] > 1) {
-          console.warn(
-            `Duplicate attendance record found in frontend for key: ${key}`,
-            record
-          );
+          console.warn(`Duplicate attendance record found in frontend for key: ${key}`, record);
         }
       });
 
       if (attendanceData.length === 0) {
         setError(
-          filterParams.employeeId
-            ? "No attendance records found for the specified Employee ID."
+          filterParams.employeeId || filterParams.name
+            ? "No attendance records found for the specified Employee ID or Name."
             : "No attendance records found for the selected date or filters."
         );
       }
     } catch (err) {
       console.error("Error fetching attendance:", err);
-      setError(err.response?.data?.message || "Failed to load attendance data");
+      //setError(err.response?.data?.message || "Failed to load attendance data");
     } finally {
       setLoading(false);
     }
@@ -142,9 +154,7 @@ function Attendance() {
 
   useEffect(() => {
     if (user?.loginType === "HOD" && user?.department) {
-      setDepartments([
-        { _id: user.department._id, name: user.department.name },
-      ]);
+      setDepartments([{ _id: user.department._id, name: user.department.name }]);
       fetchAttendance({
         ...initialFilters,
         departmentId: user.department._id,
@@ -159,6 +169,27 @@ function Attendance() {
       fetchAttendance(initialFilters);
     }
   }, [user, fetchDepartments, fetchAttendance, initialFilters]);
+
+  useEffect(() => {
+    const fetchEmployeeRoles = async () => {
+      const roles = {};
+      for (const record of attendance) {
+        if (!employeeRoles[record.employeeId] && user?.loginType === "CEO" && record.laApproval === "Pending") {
+          try {
+            const res = await api.get(`/employees/${record.employeeId}`);
+            roles[record.employeeId] = res.data.loginType;
+          } catch (err) {
+            console.error(`Error fetching role for ${record.employeeId}:`, err);
+            roles[record.employeeId] = null;
+          }
+        }
+      }
+      if (Object.keys(roles).length > 0) {
+        setEmployeeRoles(prev => ({ ...prev, ...roles }));
+      }
+    };
+    fetchEmployeeRoles();
+  }, [attendance, user, employeeRoles]);
 
   const handleChange = (name, value) => {
     setFilters({ ...filters, [name]: value });
@@ -186,10 +217,7 @@ function Attendance() {
       const url = window.URL.createObjectURL(new Blob([res.data]));
       const link = document.createElement("a");
       link.href = url;
-      link.setAttribute(
-        "download",
-        `attendance_${status}_${filters.fromDate}.xlsx`
-      );
+      link.setAttribute("download", `attendance_${status}_${filters.fromDate}.xlsx`);
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -206,7 +234,6 @@ function Attendance() {
         alertType,
       });
       setError(null);
-      // Refresh alerts after sending notification
       const alertsRes = await api.get("/attendance/absence-alerts");
       const alerts = alertsRes.data.reduce((acc, alert) => {
         acc[alert.employeeId] = alert;
@@ -228,15 +255,235 @@ function Attendance() {
     if (!minutes) return "00:00";
     const hours = Math.floor(minutes / 60);
     const mins = minutes % 60;
-    return `${hours.toString().padStart(2, "0")}:${mins
-      .toString()
-      .padStart(2, "0")}`;
+    return `${hours.toString().padStart(2, "0")}:${mins.toString().padStart(2, "0")}`;
+  };
+
+  const calculateTotalTime = (timeIn, timeOut) => {
+    if (!timeIn || !timeOut) return "00:00";
+    const [inHours, inMins] = timeIn.split(":").map(Number);
+    const [outHours, outMins] = timeOut.split(":").map(Number);
+    const totalMins = (outHours * 60 + outMins) - (inHours * 60 + inMins);
+    return formatTime(totalMins);
+  };
+
+  const calculateOT = (timeIn, timeOut) => {
+    if (!timeIn || !timeOut) return "-";
+    const [inHours, inMins] = timeIn.split(":").map(Number);
+    const [outHours, outMins] = timeOut.split(":").map(Number);
+    const totalInMins = inHours * 60 + inMins;
+    const totalOutMins = outHours * 60 + outMins;
+    const standardEndMins = 17 * 60 + 30;
+    let totalMins = totalOutMins - totalInMins;
+    if (totalMins < 0) return "N/A";
+    let otMins = 0;
+    if (totalOutMins > standardEndMins) {
+      otMins = totalOutMins - standardEndMins;
+    }
+    if (otMins < 60) return "N/A";
+    const otHours = Math.floor(otMins / 60); // Round down to nearest hour
+    return `${otHours.toString().padStart(2, "0")}:00`;
+  };
+
+  const highlightStatus = (status) => {
+    if (!status) return "-";
+    const parts = status.split(" & ");
+    return (
+      <div>
+        {parts.map((part, index) => (
+          <div key={index}>
+            {part.split(/(\s+)/).map((subPart, i) =>
+              subPart === "FN:" || subPart === "AN:"
+                ? <strong key={`${index}-${i}`}>{subPart}</strong>
+                : subPart
+            )}
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  const isLateArrivalEligible = (timeIn, logDate) => {
+    if (!timeIn || !logDate) return false;
+    const [hours, mins] = timeIn.split(":").map(Number);
+    const totalMins = hours * 60 + mins;
+    const currentDate = new Date();
+    const recordDate = new Date(logDate);
+    const currentTimeIST = new Date(currentDate.getTime() + 5.5 * 60 * 60 * 1000);
+    const currentHours = currentTimeIST.getHours();
+    const currentMins = currentTimeIST.getMinutes();
+    const currentTotalMins = currentHours * 60 + currentMins;
+    const startWindow = 9 * 60 + 20; // 09:20 IST
+    const endWindow = 17 * 60 + 30; // 17:30 IST
+    const isSameDay = currentDate.toDateString() === recordDate.toDateString();
+    
+    return (
+      isSameDay &&
+      currentTotalMins >= startWindow &&
+      currentTotalMins <= endWindow &&
+      totalMins >= 540 && // 09:00
+      totalMins <= 555 // 09:15
+    );
+  };
+
+  const handleApologizeClick = (record) => {
+    const employeeApologyCount = apologyCounts[record.employeeId]?.count || 0;
+    if (employeeApologyCount >= 3) {
+      setError("You have reached the maximum number of apologies (3) for this month.");
+      return;
+    }
+    setSelectedRecord(record);
+    setApologizeOpen(true);
+  };
+
+  const handleApologizeSubmit = async () => {
+    if (!reason.trim()) {
+      setError("Reason of Late Arrival is required.");
+      return;
+    }
+    setLoading(true);
+    try {
+      const [inHours, inMins] = selectedRecord.timeIn.split(":").map(Number);
+      const totalMins = inHours * 60 + inMins;
+      let updatedStatus = selectedRecord.status;
+      if (totalMins < 720) { // Before 12:00 PM (FN)
+        updatedStatus = updatedStatus.replace(
+          /FN: Late Arrival/,
+          "FN: Late Arrival (Approval Pending)"
+        );
+      } else { // After 12:00 PM (AN)
+        updatedStatus = updatedStatus.replace(
+          /AN: Late Arrival/,
+          "AN: Late Arrival (Approval Pending)"
+        );
+      }
+      const response = await api.put(`/attendance/${selectedRecord._id}`, {
+        status: updatedStatus,
+        laApproval: "Pending",
+        laReason: reason,
+      });
+      setAttendance(attendance.map((a) =>
+        a._id === selectedRecord._id ? { ...a, status: updatedStatus, laApproval: "Pending", laReason: reason } : a
+      ));
+      setApologyCounts(prev => ({
+        ...prev,
+        [selectedRecord.employeeId]: {
+          count: (prev[selectedRecord.employeeId]?.count || 0) + 1,
+        },
+      }));
+      setApologizeOpen(false);
+      setReason("");
+      setError(null);
+      alert("Request Submitted Successfully");
+    } catch (err) {
+      console.error("Error submitting apology:", err.response ? err.response.data : err.message);
+      setError(err.response?.data?.message || "Failed to submit apology. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleApproveClick = (record) => {
+    setSelectedRecord(record);
+    setApprovalOpen(true);
+  };
+
+  const handleApproveSubmit = async () => {
+    if (!approvalReason.trim()) {
+      setError("Reason for approval is required.");
+      return;
+    }
+    setLoading(true);
+    try {
+      const [inHours, inMins] = selectedRecord.timeIn.split(":").map(Number);
+      const totalMins = inHours * 60 + inMins;
+      let updatedStatus = selectedRecord.status;
+      if (totalMins < 720) { // Before 12:00 PM (FN)
+        updatedStatus = updatedStatus.replace(
+          /FN: Late Arrival \(Approval Pending\)/,
+          "FN: Late Arrival (Allowed)"
+        );
+      } else { // After 12:00 PM (AN)
+        updatedStatus = updatedStatus.replace(
+          /AN: Late Arrival \(Approval Pending\)/,
+          "AN: Late Arrival (Allowed)"
+        );
+      }
+      await api.put(`/attendance/${selectedRecord._id}`, {
+        status: updatedStatus,
+        laApproval: "Allowed",
+        laReason: selectedRecord.laReason,
+        approvalReason: approvalReason,
+      });
+      setAttendance(attendance.map((a) =>
+        a._id === selectedRecord._id ? { ...a, status: updatedStatus, laApproval: "Allowed", approvalReason } : a
+      ));
+      setApprovalOpen(false);
+      setApprovalReason("");
+      setError(null);
+      alert("Request Approved Successfully");
+    } catch (err) {
+      console.error("Error approving:", err.response ? err.response.data : err.message);
+      setError(err.response?.data?.message || "Failed to approve. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleRejectClick = (record) => {
+    setSelectedRecord(record);
+    setRejectionOpen(true);
+  };
+
+  const handleRejectSubmit = async () => {
+    if (!rejectionReason.trim()) {
+      setError("Reason for rejection is required.");
+      return;
+    }
+    setLoading(true);
+    try {
+      const [inHours, inMins] = selectedRecord.timeIn.split(":").map(Number);
+      const totalMins = inHours * 60 + inMins;
+      let updatedStatus = selectedRecord.status;
+      if (totalMins < 720) { // Before 12:00 PM (FN)
+        updatedStatus = updatedStatus.replace(
+          /FN: Late Arrival \(Approval Pending\)/,
+          "FN: Late Arrival (Denied)"
+        );
+      } else { // After 12:00 PM (AN)
+        updatedStatus = updatedStatus.replace(
+/AN: Late Arrival \(Approval Pending\)/,
+          "AN: Late Arrival (Denied)"
+        );
+      }
+      await api.put(`/attendance/${selectedRecord._id}`, {
+        status: updatedStatus,
+        laApproval: "Denied",
+        laReason: selectedRecord.laReason,
+        rejectionReason: rejectionReason,
+      });
+      setAttendance(attendance.map((a) =>
+        a._id === selectedRecord._id ? { ...a, status: updatedStatus, laApproval: "Denied", rejectionReason } : a
+      ));
+      setRejectionOpen(false);
+      setRejectionReason("");
+      setError(null);
+      alert("Request Rejected Successfully");
+    } catch (err) {
+      console.error("Error rejecting:", err.response ? err.response.data : err.message);
+      setError(err.response?.data?.message || "Failed to reject. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDetailsClick = (record) => {
+    setSelectedRecord(record);
+    setDetailsOpen(true);
   };
 
   const hodDepartmentName =
     user?.loginType === "HOD" && user?.department
-      ? departments.find((dep) => dep._id === user.department._id)?.name ||
-        "Unknown"
+      ? departments.find((dep) => dep._id === user.department._id)?.name || "Unknown"
       : "";
 
   return (
@@ -252,7 +499,7 @@ function Attendance() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5 }}
-            className="mb-6 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4"
+            className="mb-6 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4"
           >
             <div className="flex-1 min-w-[200px]">
               <Label htmlFor="employeeId">Employee ID</Label>
@@ -263,6 +510,17 @@ function Attendance() {
                 onChange={(e) => handleChange("employeeId", e.target.value)}
                 placeholder="Employee ID"
                 disabled={user?.loginType === "Employee"}
+                className="mt-1 border-gray-300 focus:ring-blue-500 focus:border-blue-500"
+              />
+            </div>
+            <div className="flex-1 min-w-[200px]">
+              <Label htmlFor="name">Name</Label>
+              <Input
+                id="name"
+                name="name"
+                value={filters.name}
+                onChange={(e) => handleChange("name", e.target.value)}
+                placeholder="Employee Name"
                 className="mt-1 border-gray-300 focus:ring-blue-500 focus:border-blue-500"
               />
             </div>
@@ -354,18 +612,19 @@ function Attendance() {
                 <Table className="min-w-full">
                   <TableHeader>
                     <TableRow className="border-b">
-                      <TableHead className="font-semibold">
-                        Employee ID
-                      </TableHead>
-                      <TableHead className="font-semibold">User ID</TableHead>
+                      <TableHead className="font-semibold">Employee ID</TableHead>
                       <TableHead className="font-semibold">Name</TableHead>
                       <TableHead className="font-semibold">Date</TableHead>
                       <TableHead className="font-semibold">Time IN</TableHead>
                       <TableHead className="font-semibold">Time OUT</TableHead>
                       <TableHead className="font-semibold">Status</TableHead>
+                      <TableHead className="font-semibold">Total Time</TableHead>
                       <TableHead className="font-semibold">OT</TableHead>
                       {user?.loginType === "Admin" && (
                         <TableHead className="font-semibold">Action</TableHead>
+                      )}
+                      {(user?.loginType === "HOD" || user?.loginType === "Admin") && (
+                        <TableHead className="font-semibold">Late Arrival</TableHead>
                       )}
                     </TableRow>
                   </TableHeader>
@@ -376,16 +635,16 @@ function Attendance() {
                         className="hover:bg-gray-50"
                       >
                         <TableCell>{a.employeeId}</TableCell>
-                        <TableCell>{a.userId}</TableCell>
                         <TableCell>{a.name}</TableCell>
                         <TableCell>{formatDateDisplay(a.logDate)}</TableCell>
                         <TableCell>{a.timeIn || "-"}</TableCell>
                         <TableCell>{a.timeOut || "-"}</TableCell>
                         <TableCell>
-                          {a.status}
+                          {highlightStatus(a.status)}
                           {a.halfDay ? ` (${a.halfDay})` : ""}
                         </TableCell>
-                        <TableCell>{formatTime(a.ot)}</TableCell>
+                        <TableCell>{calculateTotalTime(a.timeIn, a.timeOut)}</TableCell>
+                        <TableCell>{calculateOT(a.timeIn, a.timeOut) || "-"}</TableCell>
                         {user?.loginType === "Admin" && (
                           <TableCell>
                             {absenceAlerts[a.employeeId]?.days === 3 && (
@@ -401,16 +660,53 @@ function Attendance() {
                             {absenceAlerts[a.employeeId]?.days === 5 && (
                               <Button
                                 onClick={() =>
-                                  handleSendNotification(
-                                    a.employeeId,
-                                    "termination"
-                                  )
+                                  handleSendNotification(a.employeeId, "termination")
                                 }
                                 className="bg-red-600 hover:bg-red-700 text-white"
                               >
                                 Send Termination Notice
                               </Button>
                             )}
+                          </TableCell>
+                        )}
+                        {((user?.loginType === "HOD" && a.employeeId !== user.employeeId && a.laApproval === "Pending") || 
+                          (user?.loginType === "CEO" && a.laApproval === "Pending" && (employeeRoles[a.employeeId] === "HOD" || !employeeRoles[a.employeeId]))) && (
+                          <TableCell>
+                            <div className="flex gap-2">
+                              <Button
+                                onClick={() => handleApproveClick(a)}
+                                className="bg-green-600 hover:bg-green-700 text-white"
+                              >
+                                Approve
+                              </Button>
+                              <Button
+                                onClick={() => handleRejectClick(a)}
+                                className="bg-red-600 hover:bg-red-700 text-white"
+                              >
+                                Reject
+                              </Button>
+                            </div>
+                          </TableCell>
+                        )}
+                        {(user?.loginType === "HOD" || user?.loginType === "Admin" || user?.loginType === "Employee") && (a.laApproval === "Allowed" || a.laApproval === "Denied" || a.laApproval === "Pending") && (
+                          <TableCell>
+                            <Button
+                              onClick={() => handleDetailsClick(a)}
+                              className="bg-blue-500 hover:bg-blue-600 text-white"
+                            >
+                              View Details
+                            </Button>
+                          </TableCell>
+                        )}
+                        {["Employee", "HOD"].includes(user?.loginType) && a.employeeId === user.employeeId && isLateArrivalEligible(a.timeIn, a.logDate) && !(/Approval Pending|Allowed|Denied/.test(a.status)) && (
+                          <TableCell>
+                            <Button
+                              onClick={() => handleApologizeClick(a)}
+                              className="bg-yellow-500 hover:bg-yellow-600 text-white"
+                              disabled={(apologyCounts[a.employeeId]?.count || 0) >= 3}
+                            >
+                              Apologize
+                            </Button>
                           </TableCell>
                         )}
                       </TableRow>
@@ -444,6 +740,127 @@ function Attendance() {
               />
             </>
           )}
+          <Dialog open={apologizeOpen} onOpenChange={setApologizeOpen}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Reason for Late Arrival</DialogTitle>
+              </DialogHeader>
+              <div className="py-4">
+                <Label htmlFor="reason">Reason (Required)</Label>
+                <Input
+                  id="reason"
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
+                  placeholder="Enter reason for late arrival"
+                  className="mt-1"
+                />
+                {error && <p className="text-red-500 text-sm mt-1">{error}</p>}
+              </div>
+              <DialogFooter>
+                <Button
+                  onClick={() => setApologizeOpen(false)}
+                  className="mr-2"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleApologizeSubmit}
+                  className="bg-blue-600 text-white"
+                >
+                  Submit
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+          <Dialog open={approvalOpen} onOpenChange={setApprovalOpen}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Reason for Approval</DialogTitle>
+              </DialogHeader>
+              <div className="py-4">
+                <Label htmlFor="approvalReason">Reason (Required)</Label>
+                <Input
+                  id="approvalReason"
+                  value={approvalReason}
+                  onChange={(e) => setApprovalReason(e.target.value)}
+                  placeholder="Enter reason for approval"
+                  className="mt-1"
+                />
+                {error && <p className="text-red-500 text-sm mt-1">{error}</p>}
+              </div>
+              <DialogFooter>
+                <Button
+                  onClick={() => setApprovalOpen(false)}
+                  className="mr-2"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleApproveSubmit}
+                  className="bg-green-600 text-white"
+                >
+                  Approve
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+          <Dialog open={rejectionOpen} onOpenChange={setRejectionOpen}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Reason for Rejection</DialogTitle>
+              </DialogHeader>
+              <div className="py-4">
+                <Label htmlFor="rejectionReason">Reason (Required)</Label>
+                <Input
+                  id="rejectionReason"
+                  value={rejectionReason}
+                  onChange={(e) => setRejectionReason(e.target.value)}
+                  placeholder="Enter reason for rejection"
+                  className="mt-1"
+                />
+                {error && <p className="text-red-500 text-sm mt-1">{error}</p>}
+              </div>
+              <DialogFooter>
+                <Button
+                  onClick={() => setRejectionOpen(false)}
+                  className="mr-2"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleRejectSubmit}
+                  className="bg-red-600 text-white"
+                >
+                  Reject
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+          <Dialog open={detailsOpen} onOpenChange={setDetailsOpen}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Late Arrival Details</DialogTitle>
+              </DialogHeader>
+              <div className="py-4">
+                <div className="mb-4">
+                  <Label className="font-semibold">Employee Reason</Label>
+                  <p>{selectedRecord?.laReason || "No reason provided"}</p>
+                </div>
+                <div>
+                  <Label className="font-semibold">HOD Reason</Label>
+                  <p>{(selectedRecord?.approvalReason || selectedRecord?.rejectionReason) || "No reason provided"}</p>
+                </div>
+              </div>
+              <DialogFooter>
+                <Button
+                  onClick={() => setDetailsOpen(false)}
+                  className="bg-blue-600 text-white"
+                >
+                  Close
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </CardContent>
       </Card>
     </ContentLayout>

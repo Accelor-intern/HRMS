@@ -40,3 +40,39 @@
 .read-the-docs {
   color: #888;
 } */
+
+/* Stronger CSS rules with !important */
+.react-calendar__month-view__days__day--weekend {
+  color: inherit !important;
+}
+
+.react-calendar__month-view__days__day--weekend.sun {
+  color: red !important;
+  font-weight: 600;
+}
+
+.bg-red-200 {
+  
+  color: red !important;
+  font-weight: 600;
+}
+
+/* RH date styling */
+.restricted-holiday {
+  color: #7c3aed !important; /* Tailwind's purple-600 */
+  font-weight: 600;
+}
+
+/* Purple background for RH days */
+.rh-day {
+  background-color: #ddd6fe !important;  /* Tailwind's purple-200 */
+  color: #6b21a8 !important;             /* Tailwind's purple-800 */
+  font-weight: 600;
+}
+
+
+
+
+
+
+

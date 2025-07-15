@@ -9,6 +9,13 @@ import { AuthContext } from '../context/AuthContext';
 import ContentLayout from './ContentLayout';
 import io from 'socket.io-client';
 import OTTable from './OTTable';
+import CompensatoryTable from './CompensatoryTable';
+import Clock from 'react-clock';
+import 'react-clock/dist/Clock.css';
+import Calendar from 'react-calendar';
+import 'react-calendar/dist/Calendar.css'; // Default styles
+
+
 
 function EmployeeDashboard() {
   const { user } = useContext(AuthContext);
@@ -16,21 +23,36 @@ function EmployeeDashboard() {
     attendanceData: [],
     paidLeavesRemaining: { monthly: 0, yearly: 0 },
     unpaidLeavesTaken: 0,
-    leaveRecords: [],
-    overtimeHours: 0,
+    medicalLeaves: 0,
     restrictedHolidays: 0,
     compensatoryLeaves: 0,
     compensatoryAvailable: [],
+    employeeAttendance: [], // Ensure initialized as array
+    leaveRecords: [],
+    overtimeHours: 0,
     otClaimRecords: [],
     unclaimedOTRecords: [],
     claimedOTRecords: [],
+    unclaimedCompRecords: [],
+    claimedCompRecords: [],
     odRecords: [],
+    birthdayMessage: '',
+    birthdayCountdown: '',
   });
   const [attendanceView, setAttendanceView] = useState('daily');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [socket, setSocket] = useState(null);
+  const [currentTime, setCurrentTime] = useState(new Date());
+
+useEffect(() => {
+  const interval = setInterval(() => setCurrentTime(new Date()), 1000);
+  return () => clearInterval(interval);
+}, []);
+
   const [isEligible, setIsEligible] = useState(false);
+  const [greeting, setGreeting] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
 
   useEffect(() => {
     if (user?.employeeId) {
@@ -40,12 +62,8 @@ function EmployeeDashboard() {
         withCredentials: true,
       });
 
-      socketInstance.on('connect', () => {
-        console.log('WebSocket connected');
-      });
-      socketInstance.on('connect_error', (err) => {
-        console.error('WebSocket connection error:', err.message);
-      });
+      socketInstance.on('connect', () => console.log('WebSocket connected'));
+      socketInstance.on('connect_error', (err) => console.error('WebSocket connection error:', err.message));
 
       setSocket(socketInstance);
 
@@ -56,74 +74,114 @@ function EmployeeDashboard() {
     }
   }, [user?.employeeId]);
 
+  useEffect(() => {
+  const interval = setInterval(() => setCurrentTime(new Date()), 1000);
+  return () => clearInterval(interval);
+}, []);
+
   const fetchData = useCallback(async () => {
     if (!user) {
       setError('User not authenticated. Please log in.');
       setLoading(false);
       return;
     }
+
+    setLoading(true);
+    setError(null);
+
     try {
-      setLoading(true);
-      setError(null);
-
+      console.log('Fetching employee info...');
       const employeeRes = await api.get('/dashboard/employee-info');
-      const { paidLeaves, employeeType, restrictedHolidays, compensatoryLeaves, department, designation } = employeeRes.data;
+      console.log('Employee info response:', employeeRes.data);
+      const {
+        paidLeaves,
+        medicalLeaves,
+        restrictedHolidays,
+        compensatoryLeaves,
+        compensatoryAvailable,
+        department,
+        designation,
+        dateOfBirth,
+      } = employeeRes.data;
 
+      // Eligibility check
       const eligibleDepartments = ['Production', 'Mechanical', 'AMETL'];
       const eligibleDesignations = ['Technician', 'Sr. Technician', 'Junior Engineer'];
-      const isDeptEligible = department && department.name && eligibleDepartments.includes(department.name);
-      const isDesignationEligible = designation && eligibleDesignations.includes(designation);
-      console.log('Eligibility check:', { isDeptEligible, isDesignationEligible, department: department?.name, designation }); // Debug
+      const isDeptEligible = department?.name && eligibleDepartments.includes(department.name);
+      const isDesignationEligible = eligibleDesignations.includes(designation);
       setIsEligible(isDeptEligible && isDesignationEligible);
 
-      const today = new Date();
-      const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-      const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
-      const startOfYear = new Date(today.getFullYear(), 0, 1);
-      const endOfYear = new Date(today.getFullYear(), 11, 31);
-      let fromDate, toDate;
+    
+// Date handling for today (11:34 AM IST, July 14, 2025)
+const now = new Date();
+const istOffsetMs = 5.5 * 60 * 60 * 1000; // IST offset in milliseconds
+const istNow = new Date(now.getTime() + istOffsetMs);
 
-      const otFromDate = new Date(today.getFullYear(), today.getMonth(), 1);
-      const otToDate = new Date(today.getFullYear(), today.getMonth() + 1, 0);
-      otToDate.setHours(23, 59, 59, 999);
+// Use current day for attendance fetch
+const today = new Date(istNow);
+const todayDateStr = today.toISOString().split('T')[0];
+console.log('Fetching attendance for date:', todayDateStr);
 
-      if (attendanceView === 'daily') {
-        fromDate = new Date(today);
-        toDate = new Date(today);
-        fromDate.setHours(0, 0, 0, 0);
-        toDate.setHours(23, 59, 59, 999);
-      } else if (attendanceView === 'monthly') {
-        fromDate = startOfMonth;
-        toDate = endOfMonth;
-      } else {
-        fromDate = startOfYear;
-        toDate = endOfYear;
-      }
-      const statsRes = await api.get(`/dashboard/employee-stats?attendanceView=${attendanceView}&fromDate=${otFromDate.toISOString()}&toDate=${otToDate.toISOString()}`);
+const startOfDay = new Date(today);
+startOfDay.setUTCHours(3, 45, 0, 0); // 9:15 AM IST (UTC+5:30)
+const endOfDay = new Date(today);
+endOfDay.setUTCHours(17, 30, 0, 0); // 6:00 PM IST
 
-      setData({
-        attendanceData: statsRes.data.attendanceData,
-        paidLeavesRemaining: {
-          monthly: paidLeaves,
-          yearly: employeeType === 'Confirmed' ? paidLeaves : 0,
-        },
-        unpaidLeavesTaken: statsRes.data.unpaidLeavesTaken,
-        leaveRecords: statsRes.data.leaveRecords,
-        overtimeHours: statsRes.data.overtimeHours,
-        restrictedHolidays: restrictedHolidays,
-        compensatoryLeaves: compensatoryLeaves,
-        compensatoryAvailable: statsRes.data.compensatoryLeaveEntries || [],
-        otClaimRecords: statsRes.data.otClaimRecords || [],
-        unclaimedOTRecords: statsRes.data.unclaimedOTRecords || [],
-        claimedOTRecords: statsRes.data.claimedOTRecords || [],
-        odRecords: statsRes.data.odRecords || [],
-      });
-      console.log('Dashboard data:', {
-        employee: employeeRes.data,
-        stats: statsRes.data,
-      });
+// Birthday calculation
+let birthdayMessage = '';
+let birthdayCountdown = '';
+if (dateOfBirth) {
+  const birthday = new Date(dateOfBirth);
+  birthday.setFullYear(istNow.getFullYear());
+  const isBirthdayToday = birthday.toDateString() === istNow.toDateString();
+  const tomorrow = new Date(istNow);
+  tomorrow.setDate(istNow.getDate() + 1);
+  const isBirthdayTomorrow = birthday.toDateString() === tomorrow.toDateString();
+
+  if (isBirthdayToday) {
+    birthdayMessage = '🎉 Happy Birthday! Wishing you a fantastic day! 🎂';
+  } else if (isBirthdayTomorrow) {
+    const diffTime = Math.abs(birthday - istNow);
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    birthdayCountdown = `🎁 Birthday Countdown: ${diffDays} day(s) left!`;
+  }
+} else {
+  console.warn('dateOfBirth is missing or invalid in API response');
+}
+
+// Fetch attendance for the current day
+console.log('Fetching attendance for date:', todayDateStr);
+const attendanceRes = await api.get('/dashboard/attendance', {
+  params: { date: todayDateStr },
+});
+console.log('Attendance response:', attendanceRes.data);
+
+setData((prevData) => ({
+  ...prevData,
+  attendanceData: [],
+  paidLeavesRemaining: { monthly: paidLeaves, yearly: user.employeeType === 'Confirmed' ? paidLeaves : 0 },
+  unpaidLeavesTaken: employeeRes.data.unpaidLeavesTaken || 0,
+  medicalLeaves: medicalLeaves || 0,
+  restrictedHolidays: restrictedHolidays || 0,
+  compensatoryLeaves: compensatoryLeaves || 0,
+  compensatoryAvailable: compensatoryAvailable || [],
+  employeeAttendance: Array.isArray(attendanceRes.data) ? attendanceRes.data : [], // Ensure always an array
+  leaveRecords: [],
+  overtimeHours: 0,
+  restrictedHolidays,
+  compensatoryLeaves,
+  compensatoryAvailable,
+  otClaimRecords: [],
+  unclaimedOTRecords: [],
+  claimedOTRecords: [],
+  unclaimedCompRecords: [],
+  claimedCompRecords: [],
+  odRecords: [],
+  birthdayMessage,
+  birthdayCountdown,
+}));
     } catch (err) {
-      console.error('Employee dashboard fetch error:', err);
+      console.error('Dashboard fetch error:', err.response ? err.response.data : err.message);
       setError(err.response?.data?.message || 'Failed to fetch dashboard data. Please try again.');
     } finally {
       setLoading(false);
@@ -137,11 +195,14 @@ function EmployeeDashboard() {
         console.log('Received notification, refreshing dashboard data');
         fetchData();
       });
-      return () => {
-        socket.off('notification');
-      };
+      return () => socket.off('notification');
     }
   }, [fetchData, socket, user?.employeeId]);
+
+  useEffect(() => {
+    const hour = new Date().getHours();
+    setGreeting(hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening');
+  }, []);
 
   if (loading) {
     return (
@@ -151,102 +212,215 @@ function EmployeeDashboard() {
     );
   }
 
-  if (error) {
+  if (error || !user) {
     return (
       <ContentLayout title="My Dashboard">
-        <div className="mb-4 p-4 bg-red-100 text-red-700 rounded">{error}</div>
+        <div className="mb-4 p-4 bg-red-100 text-red-700 rounded">
+          {error || 'User not authenticated. Please log in.'}
+        </div>
       </ContentLayout>
     );
   }
 
+  const filteredAttendance = data.employeeAttendance.filter(emp =>
+    emp.name.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  let cardCount = 3; // Casual, Unpaid, Compensatory
+
+if (user.employeeType === 'Confirmed') {
+  cardCount += 2; // Medical + Restricted Holiday
+}
+
+
   return (
-    <ContentLayout title="My Dashboard">
+    <ContentLayout title="My Workspace">
       <div className="flex flex-col items-center w-full">
-        <div className="flex items-center justify-around gap-6 w-full">
-          <Card className="w-48 h-48 flex flex-col items-center justify-center bg-gradient-to-br from-blue-50 to-blue-100">
-            <CardHeader className="p-2">
-              <CardTitle className="text-lg font-semibold text-blue-800 text-center">
-                Paid Leaves Remaining
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="p-2 text-center">
-              <p className="text-xl font-bold text-blue-600">
-                Monthly: {data.paidLeavesRemaining.monthly}
-              </p>
-              {user.employeeType === 'Confirmed' && (
-                <p className="text-xl font-bold text-blue-600 mt-2">
-                  Yearly: {data.paidLeavesRemaining.yearly}
-                </p>
-              )}
-            </CardContent>
-          </Card>
-          <Card className="w-48 h-48 flex flex-col items-center justify-center bg-gradient-to-br from-purple-50 to-purple-100">
-            <CardHeader className="p-2">
-              <CardTitle className="text-lg font-semibold text-purple-800 text-center">
-                Unpaid Leaves Taken (Current Month)
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="p-2">
-              <p className="text-3xl font-bold text-purple-600 text-center">{data.unpaidLeavesTaken}</p>
-            </CardContent>
-          </Card>
-          {!isEligible && ( // Hide for eligible employees
-            <Card className="w-48 h-48 flex flex-col items-center justify-center bg-gradient-to-br from-teal-50 to-teal-100">
-              <CardHeader className="p-2">
-                <CardTitle className="text-lg font-semibold text-teal-800 text-center">
-                  Compensatory Leave
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="p-2 text-center">
-                <p className="text-xl font-bold text-teal-600">
-                  {data.compensatoryLeaves} hrs
-                </p>
-                <p className="text-sm text-teal-600">
-                  ({data.compensatoryAvailable.length} entries)
-                </p>
-              </CardContent>
-            </Card>
-          )}
-          <Card className="w-48 h-48 flex flex-col items-center justify-center bg-gradient-to-br from-yellow-50 to-yellow-100">
-            <CardHeader className="p-2">
-              <CardTitle className="text-lg font-semibold text-yellow-800 text-center">
-              Restricted Holidays
-            </CardTitle>
-            </CardHeader>
-            <CardContent className="p-2">
-              <p className="text-3xl font-bold text-yellow-600 text-center">{data.restrictedHolidays}</p>
-            </CardContent>
-          </Card>
+        {/* Greeting and Birthday */}
+        <div className="w-full max-w-[1200px] bg-gradient-to-r from-blue-50 to-indigo-100 p-6 rounded-lg mb-6 text-center shadow-lg">
+          <h1 className="text-3xl font-bold text-indigo-800">{`${greeting}, ${user?.name || 'HOD'}!`}</h1>
+          {data.birthdayMessage && <p className="text-xl text-green-600 font-semibold mt-2 ">{data.birthdayMessage}</p>}
+          {data.birthdayCountdown && <p className="text-lg text-yellow-600 font-medium mt-1">{data.birthdayCountdown}</p>}
         </div>
-        <div className="mt-8 grid grid-cols-1 gap-6 w-full max-w-[900px]">
-          <Card>
-            <CardHeader className="flex flex-row justify-between items-center">
-              <CardTitle>Attendance ({attendanceView.charAt(0).toUpperCase() + attendanceView.slice(1)})</CardTitle>
-              <Select
-                value={attendanceView}
-                onValueChange={(value) => setAttendanceView(value)}
-                aria-label="Select attendance view"
-              >
-                <SelectTrigger className="w-[120px]">
-                  <SelectValue placeholder="Daily" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="daily">Daily</SelectItem>
-                  <SelectItem value="monthly">Monthly</SelectItem>
-                  <SelectItem value="yearly">Yearly</SelectItem>
-                </SelectContent>
-              </Select>
+
+   <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6 justify-items-center w-full max-w-[1200px] mb-8">
+
+  {/* Casual Leave */}
+  <Card className="w-full h-40 bg-gradient-to-br from-blue-100 to-blue-200 shadow-md hover:shadow-lg transition-shadow">
+    <CardHeader className="p-4">
+      <CardTitle className="text-lg font-semibold text-blue-900">Casual Leave</CardTitle>
+    </CardHeader>
+    <CardContent className="p-4 text-center">
+      {user.employeeType === 'Confirmed' ? (
+        <>
+          <p className="text-2xl font-bold text-blue-700">
+            Availed: {12 - data.paidLeavesRemaining.monthly}
+          </p>
+          <p className="text-md text-blue-600">Balance: {data.paidLeavesRemaining.monthly}/12</p>
+        </>
+      ) : (
+        <>
+          <p className="text-2xl font-bold text-blue-700">
+            Availed: {1 - data.paidLeavesRemaining.monthly}
+          </p>
+          <p className="text-md text-blue-600">Balance: {data.paidLeavesRemaining.monthly}/1</p>
+        </>
+      )}
+    </CardContent>
+  </Card>
+
+  {/* Medical Leave (only if Confirmed) */}
+  {user.employeeType === 'Confirmed' && (
+    <Card className="w-full h-40 bg-gradient-to-br from-green-100 to-green-200 shadow-md hover:shadow-lg transition-shadow">
+      <CardHeader className="p-4">
+        <CardTitle className="text-lg font-semibold text-green-900">Medical Leave</CardTitle>
+      </CardHeader>
+      <CardContent className="p-4 text-center">
+        <p className="text-2xl font-bold text-green-700">Availed: {7 - data.medicalLeaves}</p>
+        <p className="text-md text-green-600">Balance: {data.medicalLeaves}/7</p>
+      </CardContent>
+    </Card>
+  )}
+
+  {/* Restricted Holiday (only if Confirmed) */}
+  {user.employeeType === 'Confirmed' && (
+    <Card className="w-full h-40 bg-gradient-to-br from-yellow-100 to-yellow-200 shadow-md hover:shadow-lg transition-shadow">
+      <CardHeader className="p-4">
+        <CardTitle className="text-lg font-semibold text-yellow-900">Restricted Holiday</CardTitle>
+      </CardHeader>
+      <CardContent className="p-4 text-center">
+        <p className="text-2xl font-bold text-yellow-700">Availed: {1 - data.restrictedHolidays}</p>
+        <p className="text-md text-yellow-600">Balance: {data.restrictedHolidays}/1</p>
+      </CardContent>
+    </Card>
+  )}
+
+  {/* Unpaid Leave */}
+  <Card className="w-full h-40 bg-gradient-to-br from-purple-100 to-purple-200 shadow-md hover:shadow-lg transition-shadow">
+    <CardHeader className="p-4">
+      <CardTitle className="text-lg font-semibold text-purple-900">Unpaid Leave (LWP)</CardTitle>
+    </CardHeader>
+    <CardContent className="p-4 text-center">
+      <p className="text-2xl font-bold text-purple-700">Availed: {data.unpaidLeavesTaken}</p>
+    </CardContent>
+  </Card>
+
+  {/* Compensatory Leave (always visible) */}
+  <Card className="w-full h-40 bg-gradient-to-br from-teal-100 to-teal-200 shadow-md hover:shadow-lg transition-shadow">
+    <CardHeader className="p-4">
+      <CardTitle className="text-lg font-semibold text-teal-900">Compensatory Leave</CardTitle>
+    </CardHeader>
+    <CardContent className="p-4 text-center">
+      <p className="text-2xl font-bold text-teal-700">{`Availed: ${data.compensatoryLeaves}`}</p>
+      <p className="text-md text-teal-600">
+        Balance: {(data.compensatoryAvailable?.length || 0)} entries
+      </p>
+    </CardContent>
+  </Card>
+
+{/* Conditionally show Clock Card if cardCount < 5 */}
+  {cardCount < 5 && (
+    <Card className="col-span-2 w-full h-40 bg-gradient-to-br from-gray-200 to-gray-200 shadow-md hover:shadow-lg transition-shadow">
+      <CardContent className="p-4 h-full w-full flex flex-row items-center justify-around">
+        
+        {/* Analog Clock */}
+        <div className="flex items-center justify-center w-1/2">
+          <Clock value={currentTime} size={100} />
+        </div>
+
+        {/* Digital Time + Date */}
+        <div className="flex flex-col items-center justify-center w-1/2 space-y-1">
+          <p className="text-3xl font-bold text-blue-900">
+            {currentTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+          </p>
+          <p className="text-sm text-blue-900">
+            {currentTime.toLocaleDateString(undefined, {
+              weekday: 'long',
+              month: 'short',
+              day: 'numeric',
+            })}
+          </p>
+        </div>
+
+      </CardContent>
+    </Card>
+  )}
+
+
+</div>
+
+
+
+
+
+        {/* Attendance Records */}
+        <div className="w-full max-w-[1200px] mb-8">
+          <Card className="bg-white shadow-lg rounded-lg p-6">
+            <CardHeader className="flex flex-row justify-between items-center mb-4">
+              <CardTitle className="text-xl font-semibold text-gray-800">Attendance Records (Today)</CardTitle>
+              <input
+                type="text"
+                placeholder="Search by name..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="p-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
             </CardHeader>
             <CardContent>
-              <ResponsiveContainer width="100%" height={400}>
-                <LineChart data={data.attendanceData}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="name" />
-                  <YAxis />
-                  <Tooltip />
-                  <Line type="monotone" dataKey="count" stroke="#82ca9d" />
-                </LineChart>
-              </ResponsiveContainer>
+              <Table className="min-w-full bg-white">
+                <TableHeader>
+                  <TableRow className="bg-gray-100">
+                    <TableHead className="py-2 px-4 text-left text-gray-600">Employee ID</TableHead>
+                    <TableHead className="py-2 px-4 text-left text-gray-600">Name</TableHead>
+                    <TableHead className="py-2 px-4 text-left text-gray-600">Department</TableHead>
+                    <TableHead className="py-2 px-4 text-left text-gray-600">LogIn Time</TableHead>
+                    <TableHead className="py-2 px-4 text-left text-gray-600">Status</TableHead>
+                  </TableRow>
+                </TableHeader>
+<TableBody>
+  {Array.isArray(filteredAttendance) && filteredAttendance.length > 0 ? (
+    filteredAttendance
+   .filter((emp) => !(emp.employeeId === "23005"))
+    .map((emp) => (
+      <TableRow key={emp.employeeId} className="border-b hover:bg-gray-50">
+        <TableCell className="py-2 px-4">{emp.employeeId}</TableCell>
+        <TableCell className="py-2 px-4">{emp.name}</TableCell>
+        <TableCell className="py-2 px-4">{emp.department || 'N/A'}</TableCell>
+       <TableCell className="py-2 px-4">
+  {emp.logInTime ? emp.logInTime : '-'}
+</TableCell>
+
+        <TableCell className="py-2 px-4">{emp.status}</TableCell>
+      </TableRow>
+    ))
+  ) : (
+    <TableRow>
+      <TableCell colSpan="5" className="py-2 px-4 text-center text-gray-500">
+        {error ? error : 'No attendance records available for today.'}
+      </TableCell>
+    </TableRow>
+  )}
+</TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+
+          
+        </div>
+
+        {/* Existing Attendance Chart */}
+        <div className="mt-8 grid grid-cols-1 gap-6 w-full max-w-[1200px]">
+         
+          <Card>
+            <CardHeader>
+              <CardTitle>Unclaimed Compensatory Records</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <CompensatoryTable
+                unclaimedCompRecords={data.unclaimedCompRecords}
+                claimedCompRecords={data.claimedCompRecords}
+                onClaimSuccess={fetchData}
+              />
             </CardContent>
           </Card>
           {isEligible && (

@@ -743,6 +743,58 @@ router.put('/:id', auth, ensureGfs, ensureDbConnection, checkForFiles, async (re
   }
 });
 
+// Update employee shift (HOD and Admin only)
+router.patch('/:id/shift', auth, role(['HOD', 'Admin']), async (req, res) => {
+  try {
+    const { shift } = req.body;
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ message: 'Invalid employee ID format' });
+    }
+    if (!['Regular', 'B Shift', 'C Shift'].includes(shift)) {
+      return res.status(400).json({ message: 'Invalid shift type' });
+    }
+
+    const employee = await Employee.findById(req.params.id);
+    if (!employee) {
+      return res.status(404).json({ message: 'Employee not found' });
+    }
+
+    // Authorization check for HOD
+    if (req.user.role === 'HOD') {
+      const hod = await Employee.findById(req.user.id).populate('department');
+      if (!hod?.department?._id) {
+        return res.status(400).json({ message: 'HOD department not found' });
+      }
+      if (employee.department.toString() !== hod.department._id.toString()) {
+        return res.status(403).json({ message: 'Not authorized to update shift for employees outside your department' });
+      }
+      if (employee.loginType !== 'Employee') {
+        return res.status(403).json({ message: 'HOD can only update shifts for regular employees' });
+      }
+    }
+
+    employee.shift = shift;
+    const updatedEmployee = await employee.save();
+    const populatedEmployee = await Employee.findById(employee._id).populate('department reportingManager');
+    console.log(`Shift updated for employee ${employee.employeeId} to ${shift}`);
+
+    try {
+      await Audit.create({
+        action: 'update_shift',
+        user: req.user.id || 'unknown',
+        details: `Shift updated for employee ${employee.employeeId} to ${shift}`,
+      });
+    } catch (auditErr) {
+      console.warn('Audit logging for shift update failed:', auditErr.message);
+    }
+
+    res.json(populatedEmployee);
+  } catch (err) {
+    console.error('Error updating employee shift:', err);
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
+
 // Delete employee (Admin only)
 router.delete('/:id', auth, role(['Admin']), ensureGfs, async (req, res) => {
   try {
@@ -1145,6 +1197,52 @@ router.patch('/:id/emergency-leave-permission', auth, role(['Admin', 'HOD', 'CEO
   }
 });
 
+// Immediately disable Emergency Leave permission after usage (user-triggered)
+router.patch('/:id/emergency-leave-disable', auth, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: 'Invalid employee ID format' });
+    }
+
+    // Only allow users to disable their own permission
+    if (req.user.id !== id && req.user.role !== 'Admin') {
+      return res.status(403).json({ message: 'You are not authorized to disable this permission' });
+    }
+
+    const employee = await Employee.findByIdAndUpdate(
+      id,
+      {
+        canApplyEmergencyLeave: false,
+        lastEmergencyLeaveToggle: null,
+      },
+      { new: true }
+    ).populate('department reportingManager');
+
+    if (!employee) {
+      return res.status(404).json({ message: 'Employee not found' });
+    }
+
+    // Optional Audit Logging
+    try {
+      await Audit.create({
+        action: 'auto_disable_emergency_leave',
+        user: req.user.id,
+        details: `Auto-disabled Emergency Leave permission for employee ${employee.employeeId}`,
+      });
+    } catch (auditErr) {
+      console.warn('Audit logging failed:', auditErr.message);
+    }
+
+    res.json({ canApplyEmergencyLeave: false });
+  } catch (err) {
+    console.error('Error disabling Emergency Leave permission:', err);
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
+
+
 // Generate letter for an employee (Admin only)
 router.post('/generate-letter', auth, role(['Admin']), async (req, res) => {
   try {
@@ -1246,6 +1344,48 @@ router.post('/generate-letter', auth, role(['Admin']), async (req, res) => {
     res.send(buf);
   } catch (err) {
     console.error('Error generating letter:', err);
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
+
+router.get('/by-department/:departmentId', auth, role(['HOD', 'Admin', 'CEO']), async (req, res) => {
+  try {
+    const { departmentId } = req.params;
+    const { id, loginType } = req.user;
+
+    // Validate departmentId
+    if (!mongoose.Types.ObjectId.isValid(departmentId)) {
+      return res.status(400).json({ message: 'Invalid department ID format' });
+    }
+
+    // Fetch the authenticated user
+    const user = await Employee.findById(id).populate('department');
+    if (!user?.department?._id) {
+      return res.status(400).json({ message: 'User department not found' });
+    }
+
+    // Authorization check for HOD
+    if (loginType === 'HOD' && user.department._id.toString() !== departmentId) {
+      console.log(`Access denied: HOD ${user.employeeId} attempted to access department ${departmentId}`);
+      return res.status(403).json({ message: 'Not authorized to access employees from this department' });
+    }
+
+    // Verify department exists
+    const departmentExists = await Department.findById(departmentId);
+    if (!departmentExists) {
+      return res.status(404).json({ message: 'Department not found' });
+    }
+
+    // Fetch employees in the specified department
+    const employees = await Employee.find({ 
+      department: departmentId,
+      loginType: { $nin: ['CEO', 'Admin'] } // Exclude CEO and Admin
+    }).select('name employeeId');
+
+    console.log(`Fetched ${employees.length} employees for department ${departmentId} by ${loginType} user ${user.employeeId}`);
+    res.json(employees);
+  } catch (err) {
+    console.error('Error fetching employees by department:', err);
     res.status(500).json({ message: 'Server error', error: err.message });
   }
 });

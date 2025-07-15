@@ -37,7 +37,7 @@ const employeeSchema = new mongoose.Schema({
   },
   employeeType: { 
     type: String, 
-    enum: ['Intern', 'Confirmed', 'Contractual', 'Probation', 'Apprentice', 'OJT'],
+    enum: ['Intern', 'Confirmed', 'Contractual', 'Probation', 'Apprentice', 'OJT','Notice Period'],
     required: function() { return this.status === 'Working'; }
   },
   probationPeriod: { 
@@ -110,6 +110,11 @@ const employeeSchema = new mongoose.Schema({
   canApplyEmergencyLeave: { type: Boolean, default: false }, // Permission for Emergency Leave
   lastEmergencyLeaveToggle: { type: Date }, // Tracks when canApplyEmergencyLeave was last set to true
   lastPunchMissedSubmission: { type: Date }, // Tracks last Punch Missed Form submission
+    shift: { 
+    type: String, 
+    enum: ['Regular', 'B Shift', 'C Shift'], 
+    default: 'Regular' 
+  }, // Shift assignment: Regular (9:00 AM–5:30 PM), B Shift (2:00 PM–10:30 PM), C Shift (10:00 PM–6:30 AM)
   attendanceHistory: [{ // New field for attendance history
     date: { type: Date, required: true },
     status: { type: String, enum: ['Present', 'Absent', 'On Leave'], required: true },
@@ -122,6 +127,22 @@ const employeeSchema = new mongoose.Schema({
 employeeSchema.pre('save', async function(next) {
   if (this.isModified('password') && this.password) {
     this.password = await bcrypt.hash(this.password, 10);
+  }
+  next();
+});
+
+// Middleware to log shift changes
+employeeSchema.pre('save', async function(next) {
+  if (this.isModified('shift') && !this.isNew) {
+    try {
+      await Audit.create({
+        action: 'update_shift',
+        user: 'system', // Will be updated in the API to use req.user.id
+        details: `Shift changed for employee ${this.employeeId} to ${this.shift}`,
+      });
+    } catch (auditErr) {
+      console.warn('Audit logging for shift change failed:', auditErr.message);
+    }
   }
   next();
 });

@@ -5,6 +5,7 @@ import Dashboard from '../components/Dashboard';
 import Profile from '../components/Profile';
 import LeaveList from '../components/LeaveList';
 import EmployeeList from '../components/EmployeeList';
+import Attendance from '../components/Attendance';
 import ODList from '../components/ODList';
 import ApproveOT from '../components/OTApproval';
 import PunchMissedList from '../components/PunchMissedList';
@@ -17,6 +18,7 @@ function CEO() {
         <Routes>
           <Route path="dashboard" element={<Dashboard />} />
           <Route path="profile" element={<Profile />} />
+          <Route path="attendance" element={<Attendance />} />
           <Route path="approve-leaves" element={<LeaveList />} />
           <Route path="employees" element={<EmployeeList />} />
           <Route path="approve-od" element={<ODList />} />

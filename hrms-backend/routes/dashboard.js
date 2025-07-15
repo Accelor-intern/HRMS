@@ -199,7 +199,7 @@ router.get('/employee-info', auth, role(['Employee', 'HOD', 'Admin']), async (re
   try {
     const { employeeId } = req.user;
     const employee = await Employee.findOne({ employeeId })
-      .select('employeeType paidLeaves gender restrictedHolidays compensatoryLeaves department designation canApplyEmergencyLeave')
+      .select('employeeType paidLeaves gender restrictedHolidays compensatoryLeaves department designation canApplyEmergencyLeave unpaidLeavesTaken medicalLeaves dateOfBirth')
       .populate('department', 'name');
     if (!employee) {
       return res.status(404).json({ message: 'Employee not found' });
@@ -215,10 +215,13 @@ router.get('/employee-info', auth, role(['Employee', 'HOD', 'Admin']), async (re
       employeeType: employee.employeeType,
       paidLeaves: employee.paidLeaves,
       gender: employee.gender,
+      unpaidLeavesTaken: employee.unpaidLeavesTaken || '0', // Ensure this field is fetched
+      medicalLeaves: employee.medicalLeaves || 0,
       restrictedHolidays: employee.restrictedHolidays,
       compensatoryLeaves: employee.compensatoryLeaves,
       department: employee.department,
       designation: employee.designation,
+      dateOfBirth:employee.dateOfBirth,
       canApplyEmergencyLeave:employee.canApplyEmergencyLeave,
     });
   } catch (err) {
@@ -511,5 +514,59 @@ router.get('/employee-stats', auth, role(['Employee', 'HOD', 'Admin']), async (r
     res.status(500).json({ message: 'Server error', error: err.message });
   }
 });
+
+router.get('/attendance', auth, async (req, res) => {
+  try {
+    const istNow = new Date(); // Already in IST
+
+    // Get "today" at midnight
+    const istTodayStart = new Date(istNow);
+    istTodayStart.setHours(0, 0, 0, 0);
+
+    // Cutoff time: 6:30 PM IST
+    const istCutoffTime = new Date(istTodayStart);
+    istCutoffTime.setHours(18, 30, 0, 0);
+
+    // If before 6:30 PM, show today's attendance
+    let targetDateIST = new Date(istTodayStart);
+    if (istNow >= istCutoffTime) {
+      console.log('Current IST time past 6:30 PM, clearing dashboard...');
+      return res.json([]);
+    }
+
+    // Convert IST to UTC range
+    const startOfDayUTC = new Date(targetDateIST.getTime() );
+    const endOfDayUTC = new Date(startOfDayUTC);
+    endOfDayUTC.setHours(23, 59, 59, 999);
+
+    console.log('Querying attendance from:', startOfDayUTC, 'to:', endOfDayUTC);
+
+    const attendanceRecords = await Attendance.find({
+      logDate: { $gte: startOfDayUTC, $lte: endOfDayUTC },
+    }).select('employeeId timeIn status');
+
+    const employeeDetails = await Employee.find({
+      employeeId: { $in: attendanceRecords.map(record => record.employeeId) },
+    }).select('employeeId name department').populate('department', 'name');
+
+    const attendanceData = attendanceRecords.map(record => {
+      const employee = employeeDetails.find(emp => emp.employeeId === record.employeeId);
+      return {
+        employeeId: record.employeeId,
+        name: employee ? employee.name : 'Unknown',
+        department: employee?.department?.name || 'N/A',
+        logInTime: record.timeIn,
+        status: record.status,
+      };
+    });
+
+    console.log('Fetched attendance data:', attendanceData);
+    res.json(attendanceData);
+  } catch (err) {
+    console.error('Error fetching attendance records:', err);
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
+
 
 export default router;

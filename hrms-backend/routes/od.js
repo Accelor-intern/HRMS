@@ -148,11 +148,12 @@ router.get('/', auth, async (req, res) => {
     }
 
     const total = await OD.countDocuments(query);
-    const odRecords = await OD.find(query)
-      .populate('department', 'name')
-      .sort({ createdAt: -1 })
-      .skip((page - 1) * limit)
-      .limit(parseInt(limit));
+   const odRecords = await OD.find(query)
+  .populate('department', 'name')
+  .sort({ createdAt: -1 })
+  .skip((page - 1) * limit)
+  .limit(parseInt(limit))
+  .select('employeeId name designation department dateOut dateIn timeOut timeIn purpose placeUnitVisit actualPunchTimes status');
 
     res.json({ odRecords, total });
   } catch (err) {
@@ -160,76 +161,324 @@ router.get('/', auth, async (req, res) => {
     res.status(500).json({ message: 'Server error', error: err.message });
   }
 });
+// // Approve OD (ORIGINAL OGG)
+// router.put('/:id/approve', auth, role(['HOD', 'CEO', 'Admin']), async (req, res) => {
+//   try {
+//     const od = await OD.findById(req.params.id).populate('employee');
+//     if (!od) {
+//       return res.status(404).json({ message: 'OD request not found' });
+//     }
 
-// Approve OD
-router.put('/:id/approve', auth, role(['HOD', 'CEO', 'Admin']), async (req, res) => {
-  try {
-    const od = await OD.findById(req.params.id).populate('employee');
-    if (!od) {
-      return res.status(404).json({ message: 'OD request not found' });
-    }
+//     const user = await Employee.findById(req.user.id);
+//     if (!user) {
+//       return res.status(404).json({ message: 'User not found' });
+//     }
 
-    const user = await Employee.findById(req.user.id);
-    if (!user) {
-      return res.status(404).json({ message: 'User not found' });
-    }
+//     const { status } = req.body;
+//     const currentStage = req.user.role.toLowerCase();
+//     const validStatuses = req.user.role === 'Admin' ? ['Acknowledged'] : ['Approved', 'Rejected'];
 
-    const { status } = req.body;
-    const currentStage = req.user.role.toLowerCase();
-    const validStatuses = req.user.role === 'Admin' ? ['Acknowledged'] : ['Approved', 'Rejected'];
+//     if (!validStatuses.includes(status)) {
+//       return res.status(400).json({ message: `Invalid status. Must be one of ${validStatuses.join(', ')}` });
+//     }
 
-    if (!validStatuses.includes(status)) {
-      return res.status(400).json({ message: `Invalid status. Must be one of ${validStatuses.join(', ')}` });
-    }
+//     if (od.status[currentStage] !== 'Pending') {
+//       return res.status(400).json({ message: `OD is not pending ${currentStage.toUpperCase()} approval` });
+//     }
 
-    if (od.status[currentStage] !== 'Pending') {
-      return res.status(400).json({ message: `OD is not pending ${currentStage.toUpperCase()} approval` });
-    }
+//     if (req.user.role === 'HOD' && user.department.toString() !== od.department.toString()) {
+//       return res.status(403).json({ message: 'Not authorized to approve ODs for this department' });
+//     }
 
-    if (req.user.role === 'HOD' && user.department.toString() !== od.department.toString()) {
-      return res.status(403).json({ message: 'Not authorized to approve ODs for this department' });
-    }
+//     if (req.user.role === "CEO" && !["Approved", "Submitted"].includes(leave.status.hod)) {
+//       return res.status(400).json({ message: 'OD must be approved or submitted by HOD first' });
+//     }
 
-    if (req.user.role === "CEO" && !["Approved", "Submitted"].includes(leave.status.hod)) {
-      return res.status(400).json({ message: 'OD must be approved or submitted by HOD first' });
-    }
+//     if (req.user.role === 'Admin' && od.status.ceo !== 'Approved') {
+//       return res.status(400).json({ message: 'OD must be approved by CEO first' });
+//     }
 
-    if (req.user.role === 'Admin' && od.status.ceo !== 'Approved') {
-      return res.status(400).json({ message: 'OD must be approved by CEO first' });
-    }
+//     od.status[currentStage] = status;
 
-    od.status[currentStage] = status;
+//     if (status === 'Approved' && currentStage === 'hod') {
+//       od.status.ceo = 'Pending';
+//       const ceo = await Employee.findOne({ loginType: 'CEO' });
+//       if (ceo) {
+//         await Notification.create({ userId: ceo.employeeId, message: `OD request from ${od.name} awaiting CEO approval` });
+//         if (global._io) global._io.to(ceo.employeeId).emit('notification', { message: `OD request from ${od.name} awaiting CEO approval` });
+//       }
+//     } else if (['Approved', 'Submitted'].includes(status) && currentStage === 'ceo') {
+//       od.status.admin = 'Pending';
+//       const admin = await Employee.findOne({ loginType: 'Admin' });
+//       if (admin) {
+//         await Notification.create({ userId: admin.employeeId, message: `OD request from ${od.name} awaiting Admin acknowledgment` });
+//         if (global._io) global._io.to(admin.employeeId).emit('notification', { message: `OD request from ${od.name} awaiting Admin acknowledgment` });
+//       }
+//     }
 
-    if (status === 'Approved' && currentStage === 'hod') {
-      od.status.ceo = 'Pending';
-      const ceo = await Employee.findOne({ loginType: 'CEO' });
-      if (ceo) {
-        await Notification.create({ userId: ceo.employeeId, message: `OD request from ${od.name} awaiting CEO approval` });
-        if (global._io) global._io.to(ceo.employeeId).emit('notification', { message: `OD request from ${od.name} awaiting CEO approval` });
+//     await od.save();
+//     await Audit.create({ user: user.employeeId, action: `${status} OD`, details: `${status} OD request for ${od.name}` });
+
+//     const employee = await Employee.findById(od.employee);
+//     if (employee) {
+//       await Notification.create({ userId: employee.employeeId, message: `Your OD request has been ${status.toLowerCase()} by ${currentStage.toUpperCase()}` });
+//       if (global._io) global._io.to(employee.employeeId).emit('notification', { message: `Your OD request has been ${status.toLowerCase()} by ${currentStage.toUpperCase()}` });
+//     }
+
+//     res.json(od);
+//   } catch (err) {
+//     console.error('OD approval error:', err.stack);
+//     res.status(500).json({ message: 'Server error', error: err.message });
+//   }
+// });
+
+
+// // Approve OD (working correctly but for night changes updating the function 09/07/2025)
+// router.put(
+//   "/:id/approve",
+//   auth,
+//   role(["HOD", "CEO", "Admin"]),
+//   async (req, res) => {
+//     try {
+//       const od = await OD.findById(req.params.id).populate("employee");
+//       if (!od) {
+//         return res.status(404).json({ message: "OD request not found" });
+//       }
+
+//       const user = await Employee.findById(req.user.id);
+//       if (!user) {
+//         return res.status(404).json({ message: "User not found" });
+//       }
+
+//       const { status } = req.body;
+//       const currentStage = req.user.role.toLowerCase();
+//       const validStatuses =
+//         req.user.role === "Admin" ? ["Acknowledged"] : ["Approved", "Rejected"];
+
+//       if (!validStatuses.includes(status)) {
+//         return res
+//           .status(400)
+//           .json({
+//             message: `Invalid status. Must be one of ${validStatuses.join(", ")}`,
+//           });
+//       }
+
+//       if (od.status[currentStage] !== "Pending") {
+//         return res
+//           .status(400)
+//           .json({
+//             message: `OD is not pending ${currentStage.toUpperCase()} approval`,
+//           });
+//       }
+
+//       if (
+//         req.user.role === "HOD" &&
+//         user.department.toString() !== od.department.toString()
+//       ) {
+//         return res
+//           .status(403)
+//           .json({
+//             message: "Not authorized to approve ODs for this department",
+//           });
+//       }
+
+//       if (
+//         req.user.role === "CEO" &&
+//         !["Approved", "Submitted"].includes(od.status.hod)
+//       ) {
+//         return res
+//           .status(400)
+//           .json({ message: "OD must be approved or submitted by HOD first" });
+//       }
+
+//       if (req.user.role === "Admin" && od.status.ceo !== "Approved") {
+//         return res
+//           .status(400)
+//           .json({ message: "OD must be approved by CEO first" });
+//       }
+
+//       od.status[currentStage] = status;
+
+//       if (status === "Approved" && currentStage === "hod") {
+//         od.status.ceo = "Pending";
+//         const ceo = await Employee.findOne({ loginType: "CEO" });
+//         if (ceo) {
+//           await Notification.create({
+//             userId: ceo.employeeId,
+//             message: `OD request from ${od.name} awaiting CEO approval`,
+//           });
+//           if (global._io)
+//             global._io
+//               .to(ceo.employeeId)
+//               .emit("notification", {
+//                 message: `OD request from ${od.name} awaiting CEO approval`,
+//               });
+//         }
+//       } else if (["Approved", "Submitted"].includes(status) && currentStage === "ceo") {
+//         od.status.admin = "Pending";
+//         const admin = await Employee.findOne({ loginType: "Admin" });
+//         if (admin) {
+//           await Notification.create({
+//             userId: admin.employeeId,
+//             message: `OD request from ${od.name} awaiting Admin acknowledgment`,
+//           });
+//           if (global._io)
+//             global._io
+//               .to(admin.employeeId)
+//               .emit("notification", {
+//                 message: `OD request from ${od.name} awaiting Admin acknowledgment`,
+//               });
+//         }
+//       }
+
+//       await od.save();
+//       await Audit.create({
+//         user: user.employeeId,
+//         action: `${status} OD`,
+//         details: `${status} OD request for ${od.name}`,
+//       });
+
+//       const employee = await Employee.findById(od.employee);
+//       if (employee) {
+//         await Notification.create({
+//           userId: employee.employeeId,
+//           message: `Your OD request has been ${status.toLowerCase()} by ${currentStage.toUpperCase()}`,
+//         });
+//         if (global._io)
+//           global._io
+//             .to(employee.employeeId)
+//             .emit("notification", {
+//               message: `Your OD request has been ${status.toLowerCase()} by ${currentStage.toUpperCase()}`,
+//             });
+//       }
+
+//       res.json(od);
+//     } catch (err) {
+//       console.error("OD approval error:", err.stack);
+//       res.status(500).json({ message: "Server error", error: err.message });
+//     }
+//   }
+// );
+
+router.put(
+  "/:id/approve",
+  auth,
+  role(["HOD", "CEO", "Admin"]),
+  async (req, res) => {
+    try {
+      const od = await OD.findById(req.params.id).populate("employee");
+      if (!od) {
+        return res.status(404).json({ message: "OD request not found" });
       }
-    } else if (['Approved', 'Submitted'].includes(status) && currentStage === 'ceo') {
-      od.status.admin = 'Pending';
-      const admin = await Employee.findOne({ loginType: 'Admin' });
+
+      const user = await Employee.findById(req.user.id);
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      const { status } = req.body;
+      const currentStage = req.user.role.toLowerCase();
+      const validStatuses =
+        req.user.role === "Admin" ? ["Acknowledged"] : ["Approved", "Rejected"];
+
+      if (!validStatuses.includes(status)) {
+        return res
+          .status(400)
+          .json({
+            message: `Invalid status. Must be one of ${validStatuses.join(", ")}`,
+          });
+      }
+
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      if (new Date(od.recordedAt) < thirtyDaysAgo && od.status[currentStage] !== "Pending") {
+        return res.status(403).json({ message: "Cannot modify status after 30 days" });
+      }
+
+      if (od.status[currentStage] !== "Pending" && status !== od.status[currentStage]) {
+        if (req.user.role === "HOD" && user.department.toString() !== od.department.toString()) {
+          return res.status(403).json({ message: "Not authorized to modify ODs for this department" });
+        }
+        if (req.user.role === "CEO" && !["Approved", "Submitted"].includes(od.status.hod)) {
+          return res.status(400).json({ message: "OD must be approved or submitted by HOD first" });
+        }
+        if (req.user.role === "Admin" && od.status.ceo !== "Approved") {
+          return res.status(400).json({ message: "OD must be approved by CEO first" });
+        }
+        // Reset other statuses to N/A if current status is changed
+        if (status === "Rejected") {
+          od.status.hod = currentStage === "hod" ? "Rejected" : od.status.hod === "Approved" ? "N/A" : od.status.hod;
+          od.status.ceo = currentStage === "ceo" ? "Rejected" : od.status.ceo === "Approved" ? "N/A" : od.status.ceo;
+          od.status.admin = currentStage === "admin" ? "Rejected" : od.status.admin === "Acknowledged" ? "N/A" : od.status.admin;
+        } else {
+          od.status[currentStage] = status;
+        }
+      } else if (od.status[currentStage] === "Pending") {
+        if (req.user.role === "HOD" && user.department.toString() !== od.department.toString()) {
+          return res.status(403).json({ message: "Not authorized to approve ODs for this department" });
+        }
+        if (req.user.role === "CEO" && !["Approved", "Submitted"].includes(od.status.hod)) {
+          return res.status(400).json({ message: "OD must be approved or submitted by HOD first" });
+        }
+        if (req.user.role === "Admin" && od.status.ceo !== "Approved") {
+          return res.status(400).json({ message: "OD must be approved by CEO first" });
+        }
+
+        od.status[currentStage] = status;
+
+        if (status === "Approved" && currentStage === "hod") {
+          od.status.ceo = "Pending";
+          const ceo = await Employee.findOne({ loginType: "CEO" });
+          if (ceo) {
+            await Notification.create({
+              userId: ceo.employeeId,
+              message: `OD request from ${od.name} awaiting CEO approval`
+            });
+            if (global._io) global._io.to(ceo.employeeId).emit('notification', { message: `OD request from ${od.name} awaiting CEO approval` });
+          }
+        } else if (["Approved", "Submitted"].includes(status) && currentStage === "ceo") {
+          od.status.admin = "Pending";
+          const admin = await Employee.findOne({ loginType: "Admin" });
+          if (admin) {
+            await Notification.create({
+              userId: admin.employeeId,
+              message: `OD request from ${od.name} awaiting Admin acknowledgment`
+            });
+            if (global._io) global._io.to(admin.employeeId).emit('notification', { message: `OD request from ${od.name} awaiting Admin acknowledgment` });
+          }
+        }
+      }
+
+      await od.save();
+      await Audit.create({
+        user: user.employeeId,
+        action: `${status} OD`,
+        details: `${status} OD request for ${od.name}`
+      });
+
+      const employee = await Employee.findById(od.employee);
+      if (employee) {
+        await Notification.create({
+          userId: employee.employeeId,
+          message: `Your OD request has been ${status.toLowerCase()} by ${currentStage.toUpperCase()}`
+        });
+        if (global._io) global._io.to(employee.employeeId).emit('notification', { message: `Your OD request has been ${status.toLowerCase()} by ${currentStage.toUpperCase()}` });
+      }
+      // Notify Admin and Employee on status change
+      const admin = await Employee.findOne({ loginType: "Admin" });
       if (admin) {
-        await Notification.create({ userId: admin.employeeId, message: `OD request from ${od.name} awaiting Admin acknowledgment` });
-        if (global._io) global._io.to(admin.employeeId).emit('notification', { message: `OD request from ${od.name} awaiting Admin acknowledgment` });
+        await Notification.create({
+          userId: admin.employeeId,
+          message: `OD request status for ${od.name} changed to ${status} by ${currentStage.toUpperCase()}`
+        });
+        if (global._io) global._io.to(admin.employeeId).emit('notification', { message: `OD request status for ${od.name} changed to ${status} by ${currentStage.toUpperCase()}` });
       }
+
+      res.json(od);
+    } catch (err) {
+      console.error("OD approval error:", err.stack);
+      res.status(500).json({ message: "Server error", error: err.message });
     }
-
-    await od.save();
-    await Audit.create({ user: user.employeeId, action: `${status} OD`, details: `${status} OD request for ${od.name}` });
-
-    const employee = await Employee.findById(od.employee);
-    if (employee) {
-      await Notification.create({ userId: employee.employeeId, message: `Your OD request has been ${status.toLowerCase()} by ${currentStage.toUpperCase()}` });
-      if (global._io) global._io.to(employee.employeeId).emit('notification', { message: `Your OD request has been ${status.toLowerCase()} by ${currentStage.toUpperCase()}` });
-    }
-
-    res.json(od);
-  } catch (err) {
-    console.error('OD approval error:', err.stack);
-    res.status(500).json({ message: 'Server error', error: err.message });
   }
-});
-
+);
 export default router;

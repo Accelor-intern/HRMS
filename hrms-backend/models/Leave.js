@@ -26,10 +26,10 @@ const leaveSchema = new mongoose.Schema({
   fullDay: {
     from: { type: Date, required: true },
     to: { type: Date },
-    fromDuration: { type: String, enum: ['full', 'half'], default: 'full' },
+    fromDuration: { type: String, enum: ['full', 'half','forenoon','afternoon'], default: 'full' },
     fromSession: { type: String, enum: ['forenoon', 'afternoon'] },
-    toDuration: { type: String, enum: ['full', 'half'] },
-    toSession: { type: String, enum: ['forenoon'] }
+    toDuration: { type: String, enum: ['full', 'half','forenoon','afternoon'] },
+    toSession: { type: String, enum: ['forenoon', 'afternoon'] } // Fixed enum to include 'afternoon'
   },
 
   reason: { type: String, required: true },
@@ -42,10 +42,13 @@ const leaveSchema = new mongoose.Schema({
   restrictedHoliday: { type: String },
   medicalCertificate: { type: mongoose.Schema.Types.ObjectId, ref: 'Uploads.files', default: null },
 
+  // New composite leave ID field
+  compositeLeaveId: { type: String, default: null },
+
   status: {
-    hod: { type: String, enum: ['Pending', 'Approved', 'Submitted', 'Rejected'], default: 'Pending' },
-    admin: { type: String, enum: ['Pending', 'Acknowledged'], default: 'Pending' },
-    ceo: { type: String, enum: ['Pending', 'Approved', 'Rejected'], default: 'Pending' },
+    hod: { type: String, enum: ['Pending', 'Approved', 'Submitted', 'Rejected','N/A'], default: 'Pending' },
+    admin: { type: String, enum: ['Pending', 'Acknowledged','N/A'], default: 'Pending' },
+    ceo: { type: String, enum: ['Pending', 'Approved', 'Rejected','N/A'], default: 'Pending' },
   },
 
   remarks: { type: String, default: 'N/A' }

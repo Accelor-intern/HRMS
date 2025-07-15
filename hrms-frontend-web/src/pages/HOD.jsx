@@ -13,6 +13,9 @@ import MyDashboard from '../components/EmployeeDashboard';
 import ApproveOT from '../components/OTApproval';
 import PunchMissedForm from '../components/PunchMissedForm';
 import PunchMissedList from '../components/PunchMissedList';
+import ShiftManagement from '../components/ShiftManagement';
+import HodMyLeaveList from '../components/HodMyLeaveList';
+import HodOdList from '../components/HodOdList';
 
 function HOD() {
   return (
@@ -26,12 +29,16 @@ function HOD() {
           <Route path="employees" element={<EmployeeList />} />
           <Route path="leave" element={<LeaveForm />} />
           <Route path="od" element={<ODForm />} />
+           <Route path="leave-list" element={<LeaveList />} />
           <Route path="attendance" element={<Attendance />} />
           <Route path="approve-leave" element={<LeaveList />} />
           <Route path="approve-od" element={<ODList />} />
           <Route path="approve-ot" element={<ApproveOT />} />
           <Route path="punch-missed" element={<PunchMissedForm />} />
           <Route path="approve-punch-missed" element={<PunchMissedList />} />
+          <Route path="/shift-management" element={<ShiftManagement />} />
+          <Route path="/hod-my-leave-list" element={<HodMyLeaveList />} />
+          <Route path="/hod-od-list" element={<HodOdList />} />
         </Routes>
       </div>
     </div>

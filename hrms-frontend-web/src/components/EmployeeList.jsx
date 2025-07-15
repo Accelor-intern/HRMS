@@ -13,6 +13,9 @@ import ContentLayout from './ContentLayout';
 import EmployeeDetails from './EmployeeDetails';
 import EmployeeUpdateForm from './EmployeeUpdateForm';
 import Pagination from './Pagination';
+import toast from 'react-hot-toast';
+import { Loader2 } from 'lucide-react';
+import { Switch } from '../components/ui/switch'; // Assuming a Switch component is available or imported
 
 function EmployeeList() {
   console.log('EmployeeList component rendered');
@@ -35,80 +38,90 @@ function EmployeeList() {
   const [error, setError] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
+  const [shiftLoading, setShiftLoading] = useState({});
+  const [tempShift, setTempShift] = useState({});
+  const [emergencyLoading, setEmergencyLoading] = useState({}); // Track loading state for emergency toggle
 
-  useEffect(() => {
-    const fetchData = async () => {
-      setLoading(true);
-      setError(null);
+useEffect(() => {
+  const fetchData = async () => {
+    setLoading(true);
+    setError(null);
 
-      try {
-        // Fetch user details
-        const userRes = await api.get('/auth/me').catch(err => {
-          console.error('Error fetching user:', err.response?.data || err.message);
-          if (err.response?.status === 401 || err.response?.status === 403) {
+    try {
+      const userRes = await api.get('/auth/me').catch(err => {
+        console.error('Error fetching user:', err.response?.data || err.message);
+        if (err.response?.status === 401 || err.response?.status === 403) {
+          localStorage.removeItem('token');
+          navigate('/login');
+          throw new Error('not_authenticated');
+        }
+        throw new Error('Failed to fetch user details.');
+      });
+      const userLoginType = userRes.data.loginType || '';
+      setLoginType(userLoginType);
+      console.log('User fetched:', userRes.data, 'Login Type:', userLoginType, 'Department:', userRes.data.department);
+
+      const endpoint = userLoginType === 'HOD' ? '/employees/department' : '/employees';
+      const params = userLoginType === 'HOD' ? {} : { departmentId: departmentFilter === 'all' ? undefined : departmentFilter };
+      const empRes = await api.get(endpoint, { params }).catch(err => {
+        console.error('Error fetching employees:', err.response?.data || err.message);
+        if (err.response?.status === 401 || err.response?.status === 403) {
+          localStorage.removeItem('token');
+          navigate('/login');
+          throw new Error('not_authenticated');
+        }
+        throw new Error('Failed to fetch employees. Please try again later.');
+      });
+
+      // Load initial state from server and merge with local storage if available
+      const storedStates = JSON.parse(localStorage.getItem('emergencyToggleStates') || '{}');
+      const updatedEmployees = empRes.data.map(emp => ({
+        ...emp,
+        canApplyEmergencyLeave: storedStates[emp._id] !== undefined ? storedStates[emp._id] : emp.canApplyEmergencyLeave !== undefined ? emp.canApplyEmergencyLeave : false
+      }));
+      setEmployees(updatedEmployees);
+      console.log('Employees fetched with emergency status:', updatedEmployees.map(emp => ({
+        employeeId: emp.employeeId,
+        name: emp.name,
+        department: emp.department,
+        shift: emp.shift,
+        canApplyEmergencyLeave: emp.canApplyEmergencyLeave,
+      })));
+
+      if (['Admin', 'CEO'].includes(userLoginType)) {
+        try {
+          const deptRes = await api.get('/departments');
+          const validDepartments = deptRes.data.filter(dept => dept._id && dept.name.trim() !== '');
+          setDepartments(validDepartments);
+          console.log('Departments fetched:', validDepartments);
+        } catch (err) {
+          console.error('Error fetching departments:', err.response?.data || err.message);
+          if (err.response?.status === 401) {
             localStorage.removeItem('token');
             navigate('/login');
             throw new Error('not_authenticated');
+          } else if (err.response?.status === 403) {
+            setError('Access denied: Cannot fetch departments. Department filter unavailable.');
+          } else {
+            setError('Failed to fetch departments. Department filter may be unavailable.');
           }
-          throw new Error('Failed to fetch user details.');
-        });
-        const userLoginType = userRes.data.loginType || '';
-        setLoginType(userLoginType);
-        console.log('User fetched:', userRes.data);
-
-        // Fetch employees based on role
-        const endpoint = userLoginType === 'HOD' ? '/employees/department' : '/employees';
-        const params = userLoginType === 'HOD' ? {} : { departmentId: departmentFilter === 'all' ? undefined : departmentFilter };
-        const empRes = await api.get(endpoint, { params }).catch(err => {
-          console.error('Error fetching employees:', err.response?.data || err.message);
-          if (err.response?.status === 401 || err.response?.status === 403) {
-            localStorage.removeItem('token');
-            navigate('/login');
-            throw new Error('not_authenticated');
-          }
-          throw new Error('Failed to fetch employees. Please try again later.');
-        });
-        setEmployees(empRes.data);
-        console.log('Employees fetched:', empRes.data.map(emp => ({
-          employeeId: emp.employeeId,
-          name: emp.name,
-          department: emp.department,
-        })));
-
-        // Fetch departments (only for Admin and CEO)
-        if (['Admin', 'CEO'].includes(userLoginType)) {
-          try {
-            const deptRes = await api.get('/departments');
-            const validDepartments = deptRes.data.filter(dept => dept._id && dept.name.trim() !== '');
-            setDepartments(validDepartments);
-            console.log('Departments fetched:', validDepartments);
-          } catch (err) {
-            console.error('Error fetching departments:', err.response?.data || err.message);
-            if (err.response?.status === 401) {
-              localStorage.removeItem('token');
-              navigate('/login');
-              throw new Error('not_authenticated');
-            } else if (err.response?.status === 403) {
-              setError('Access denied: Cannot fetch departments. Department filter unavailable.');
-            } else {
-              setError('Failed to fetch departments. Department filter may be unavailable.');
-            }
-          }
-        } else if (userLoginType === 'HOD' && user?.department) {
-          setDepartments([{ _id: user.department._id, name: user.department.name }]);
         }
-
-      } catch (err) {
-        if (err.message !== 'not_authenticated') {
-          console.error('Fetch error:', err);
-          setError(err.message);
-        }
-      } finally {
-        setLoading(false);
+      } else if (userLoginType === 'HOD' && userRes.data?.department) {
+        setDepartments([{ _id: userRes.data.department._id, name: userRes.data.department.name }]);
       }
-    };
-    fetchData();
-  }, [navigate, departmentFilter, user]);
+    } catch (err) {
+      if (err.message !== 'not_authenticated') {
+        console.error('Fetch error:', err);
+        setError(err.message);
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+  fetchData();
+}, [navigate, departmentFilter, user]);
+
+
 
   const filteredEmployees = useMemo(() => {
     let filtered = employees;
@@ -135,6 +148,8 @@ function EmployeeList() {
       employeeId: emp.employeeId,
       name: emp.name,
       department: emp.department,
+      shift: emp.shift,
+      canApplyEmergencyLeave: emp.canApplyEmergencyLeave,
     })));
     return filtered;
   }, [employees, search, departmentFilter, loginType]);
@@ -144,21 +159,43 @@ function EmployeeList() {
     currentPage * itemsPerPage
   );
 
+  const TableCellComponent = ({ emp }) => {
+    if (!canShowEmergencyToggle(emp)) return null;
+
+    return (
+      <div className="flex items-center space-x-2">
+        <button
+          onClick={() => handleEmergencyToggle(emp._id)}
+          disabled={emergencyLoading[emp._id]}
+          className={`px-3 py-1 rounded-full text-sm font-medium transition-colors duration-200 ${
+            emp.canApplyEmergencyLeave
+              ? 'bg-green-700 text-white hover:bg-green-800'
+              : 'bg-red-700 text-white hover:bg-red-800'
+          } disabled:opacity-50`}
+        >
+          {emergencyLoading[emp._id] ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : emp.canApplyEmergencyLeave ? 'Enabled' : 'Disabled'}
+        </button>
+      </div>
+    );
+  };
   const handleDelete = async (id) => {
     if (!window.confirm('Are you sure you want to delete this employee?')) return;
     try {
       await api.delete(`/employees/${id}`);
       setEmployees(employees.filter(emp => emp._id !== id));
+      toast.success('Employee deleted successfully');
     } catch (err) {
       console.error('Error deleting employee:', err.response?.data || err.message);
       setError('Failed to delete employee. Please try again.');
+      toast.error(err.response?.data?.message || 'Failed to delete employee');
     }
   };
 
   const handleViewDetails = async (employee) => {
     try {
       let fullEmployee = employee;
-      // For HOD, fetch full employee details
       if (loginType === 'HOD') {
         const response = await api.get(`/employees/${employee._id}`);
         fullEmployee = response.data;
@@ -167,6 +204,8 @@ function EmployeeList() {
           name: fullEmployee.name,
           department: fullEmployee.department,
           loginType: fullEmployee.loginType,
+          shift: fullEmployee.shift,
+          canApplyEmergencyLeave: fullEmployee.canApplyEmergencyLeave,
         });
       }
       setSelectedEmployeeForDetails(fullEmployee);
@@ -174,6 +213,7 @@ function EmployeeList() {
     } catch (err) {
       console.error('Error fetching full employee details:', err.response?.data || err.message);
       setError('Failed to load employee details. Please try again.');
+      toast.error(err.response?.data?.message || 'Failed to load employee details');
     }
   };
 
@@ -184,17 +224,15 @@ function EmployeeList() {
 
   const handleUpdateSuccess = (updatedEmployee) => {
     console.log('handleUpdateSuccess called, updatedEmployee:', updatedEmployee);
-
-    // Ensure department is populated
     if (typeof updatedEmployee.department === 'string') {
       updatedEmployee.department = departments.find(d => d._id === updatedEmployee.department);
     }
-
     setEmployees((prevEmployees) =>
       prevEmployees.map(emp =>
         emp._id === updatedEmployee._id ? { ...emp, ...updatedEmployee } : emp
       )
     );
+    toast.success('Employee updated successfully');
   };
 
   const handleEmployeeUpdate = (updatedEmployee) => {
@@ -207,9 +245,97 @@ function EmployeeList() {
     setSelectedEmployeeForDetails(updatedEmployee);
   };
 
+  const handleShiftChange = async (employeeId) => {
+    const newShift = tempShift[employeeId] || 'Regular';
+    if (!newShift || newShift === employees.find(emp => emp._id === employeeId)?.shift) return;
+
+    setShiftLoading(prev => ({ ...prev, [employeeId]: true }));
+    try {
+      const response = await api.patch(`/employees/${employeeId}/shift`, { shift: newShift });
+
+      setEmployees(prevEmployees =>
+        prevEmployees.map(emp =>
+          emp._id === employeeId ? { ...emp, shift: newShift } : emp
+        )
+      );
+      if (selectedEmployeeForDetails?._id === employeeId) {
+        setSelectedEmployeeForDetails(prev => ({ ...prev, shift: newShift }));
+      }
+      setTempShift(prev => ({ ...prev, [employeeId]: undefined }));
+      toast.success(`Shift updated to ${newShift} for employee ${employeeId}`);
+    } catch (err) {
+      console.error('Error updating shift:', err.response?.data || err.message);
+      toast.error(err.response?.data?.message || 'Failed to update shift');
+      setTempShift(prev => ({ ...prev, [employeeId]: employees.find(emp => emp._id === employeeId)?.shift }));
+    } finally {
+      setShiftLoading(prev => ({ ...prev, [employeeId]: false }));
+    }
+  };
+
+  const handleShiftSelect = (employeeId, value) => {
+    setTempShift(prev => ({ ...prev, [employeeId]: value }));
+  };
+
+const handleEmergencyToggle = async (employeeId) => {
+  const employee = employees.find(emp => emp._id === employeeId);
+  if (!employee) return;
+
+  setEmergencyLoading(prev => ({ ...prev, [employeeId]: true }));
+  try {
+    const response = await api.patch(`/employees/${employeeId}/emergency-leave-permission`);
+    const newCanApply = response.data.canApplyEmergencyLeave;
+    setEmployees(prevEmployees =>
+      prevEmployees.map(emp =>
+        emp._id === employeeId ? { ...emp, canApplyEmergencyLeave: newCanApply } : emp
+      )
+    );
+    if (selectedEmployeeForDetails?._id === employeeId) {
+      setSelectedEmployeeForDetails(prev => ({ ...prev, canApplyEmergencyLeave: newCanApply }));
+    }
+
+    // Update local storage with the new state
+    const storedStates = JSON.parse(localStorage.getItem('emergencyToggleStates') || '{}');
+    storedStates[employeeId] = newCanApply;
+    localStorage.setItem('emergencyToggleStates', JSON.stringify(storedStates));
+    toast.success(`Emergency Leave permission ${newCanApply ? 'enabled' : 'disabled'} for ${employee.employeeId}`);
+  } catch (err) {
+    console.error('Error toggling Emergency Leave permission:', err.response?.data || err.message);
+    toast.error(err.response?.data?.message || 'Failed to update Emergency Leave permission');
+  } finally {
+    setEmergencyLoading(prev => ({ ...prev, [employeeId]: false }));
+  }
+};
+
+const canShowEmergencyToggle = (employee) => {
+  if (!user || !employee) return false;
+
+  const userDeptId = user.department?._id?.toString();
+  const employeeDeptId = employee.department?._id?.toString();
+
+  // Admin can see toggle for all
+  if (user.loginType === 'Admin') return true;
+
+  // HOD can see toggle:
+  if (user.loginType === 'HOD') {
+    // For self
+    if (user._id?.toString() === employee._id?.toString()) return true;
+
+    // For employees in same department
+    if (userDeptId && employeeDeptId && userDeptId === employeeDeptId) {
+      return true;
+    }
+  }
+
+  // CEO can toggle for HODs
+  if (user.loginType === 'CEO') return true;
+
+  return false;
+};
+
+
+
   const handleFilter = () => {
     setCurrentPage(1);
-    // Trigger re-fetch by updating dependency in useEffect
   };
 
   const hodDepartmentName =
@@ -328,6 +454,8 @@ function EmployeeList() {
                     <TableHead>Employee ID</TableHead>
                     <TableHead>Name</TableHead>
                     <TableHead>Department</TableHead>
+                    
+                    <TableHead>Emergency Leave Toggle</TableHead>
                     <TableHead>Actions</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -337,6 +465,27 @@ function EmployeeList() {
                       <TableCell>{emp.employeeId}</TableCell>
                       <TableCell>{emp.name}</TableCell>
                       <TableCell>{emp.department?.name || 'N/A'}</TableCell>
+         
+                      <TableCell>
+{canShowEmergencyToggle(emp) && (
+  <div className="flex items-center space-x-2">
+    <button
+      onClick={() => handleEmergencyToggle(emp._id)}
+      disabled={emergencyLoading[emp._id]}
+      className={`px-3 py-1 rounded-full text-sm font-medium transition-colors duration-200 ${
+        emp.canApplyEmergencyLeave
+          ? 'bg-green-700 text-white'
+          : 'bg-red-700 text-white'
+      } disabled:opacity-50`}
+    >
+      {emergencyLoading[emp._id] ? (
+        <Loader2 className="h-4 w-4 animate-spin" />
+      ) : emp.canApplyEmergencyLeave ? 'Enabled' : 'Disabled'}
+    </button>
+  </div>
+)}
+
+                      </TableCell>
                       <TableCell className="space-x-2">
                         <Button
                           onClick={() => handleViewDetails(emp)}
@@ -385,9 +534,11 @@ function EmployeeList() {
                   const response = await api.patch(`/employees/${selectedEmployeeForDetails._id}/lock-section`, { section });
                   setSelectedEmployeeForDetails(response.data);
                   setEmployees(employees.map(emp => emp._id === response.data._id ? response.data : emp));
+                  toast.success(`Section ${section} lock toggled successfully`);
                 } catch (err) {
                   console.error('Error toggling section lock:', err.response?.data || err.message);
                   setError('Failed to toggle section lock. Please try again.');
+                  toast.error(err.response?.data?.message || 'Failed to toggle section lock');
                 }
               }}
               onEmployeeUpdate={handleEmployeeUpdate}

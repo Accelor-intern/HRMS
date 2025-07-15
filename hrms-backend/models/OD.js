@@ -16,7 +16,13 @@ const odSchema = new mongoose.Schema({
     hod: { type: String, enum: ['Pending', 'Approved', 'Rejected', 'Submitted'], default: 'Pending' },
     admin: { type: String, enum: ['Pending', 'Acknowledged'], default: 'Pending' },
     ceo: { type: String, enum: ['Pending', 'Approved', 'Rejected'], default: 'Pending' },
-  }
+  },
+  actualPunchTimes: [{
+    actualTimeOut: { type: Date }, // Store as Date for precise timestamp
+    actualTimeIn: { type: Date },  // Store as Date for precise timestamp
+   punchId: { type: String, default: () => new mongoose.Types.ObjectId().toString() }, // Unique ID for each punch pair
+    recordedAt: { type: Date, default: Date.now } // Timestamp for when the punch was recorded
+  }]
 }, { timestamps: true });
 
 const OD = mongoose.models.OD || mongoose.model('OD', odSchema);
