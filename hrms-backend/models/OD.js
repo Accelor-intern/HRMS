@@ -13,15 +13,22 @@ const odSchema = new mongoose.Schema({
   purpose: { type: String, required: true },
   placeUnitVisit: { type: String, required: true },
   status: {
-    hod: { type: String, enum: ['Pending', 'Approved', 'Rejected', 'Submitted'], default: 'Pending' },
-    admin: { type: String, enum: ['Pending', 'Acknowledged'], default: 'Pending' },
-    ceo: { type: String, enum: ['Pending', 'Approved', 'Rejected'], default: 'Pending' },
+    hod: { type: String, enum: ['Pending', 'Approved', 'Rejected', 'Submitted', 'N/A'], default: 'Pending' },
+    admin: { type: String, enum: ['Pending', 'Acknowledged', 'N/A'], default: 'Pending' },
+    ceo: { type: String, enum: ['Pending', 'Approved', 'Rejected', 'N/A'], default: 'Pending' },
   },
+  statusHistory: [{
+    stage: { type: String, enum: ['hod', 'ceo', 'admin'], required: true },
+    status: { type: String, enum: ['Pending', 'Approved', 'Rejected', 'Acknowledged', 'Submitted', 'N/A'], required: true },
+    reason: { type: String, required: false },
+    changedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee', required: true },
+    changedAt: { type: Date, default: Date.now }
+  }],
   actualPunchTimes: [{
-    actualTimeOut: { type: Date }, // Store as Date for precise timestamp
-    actualTimeIn: { type: Date },  // Store as Date for precise timestamp
-   punchId: { type: String, default: () => new mongoose.Types.ObjectId().toString() }, // Unique ID for each punch pair
-    recordedAt: { type: Date, default: Date.now } // Timestamp for when the punch was recorded
+    actualTimeOut: { type: Date },
+    actualTimeIn: { type: Date },
+    punchId: { type: String, default: () => new mongoose.Types.ObjectId().toString() },
+    recordedAt: { type: Date, default: Date.now }
   }]
 }, { timestamps: true });
 

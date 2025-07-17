@@ -17,9 +17,10 @@ router.get('/stats', auth, role(['Admin', 'CEO', 'HOD']), async (req, res) => {
   try {
     const { loginType, employeeId } = req.user;
     let departmentId = null;
-
+let excludedEmployeeIds = [];
     if (loginType === 'HOD') {
       const hod = await Employee.findOne({ employeeId }).select('department');
+      excludedEmployeeIds.push(hod._id);
       if (!hod || !hod.department || !hod.department._id) {
         console.error(`HOD department not found for employeeId: ${employeeId}`);
         return res.status(400).json({ message: 'HOD department not found' });
@@ -33,7 +34,10 @@ router.get('/stats', auth, role(['Admin', 'CEO', 'HOD']), async (req, res) => {
     const tomorrow = new Date(today);
     tomorrow.setDate(today.getDate() + 1);
 
-    const employeeMatch = departmentId ? { department: departmentId, status: 'Working' } : { status: 'Working' };
+    const employeeMatch = departmentId
+  ? { department: departmentId, status: 'Working', _id: { $nin: excludedEmployeeIds } }
+  : { status: 'Working' };
+
     const employeeStats = await Employee.aggregate([
       { $match: employeeMatch },
       {

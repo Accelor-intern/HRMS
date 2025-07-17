@@ -68,8 +68,10 @@ function LeaveList() {
   const [selectedRemarkLeave, setSelectedRemarkLeave] = useState(null);
   const [pendingRejection, setPendingRejection] = useState(null);
   const [viewMode, setViewMode] = useState("approval");
-  const [adjustedDays, setAdjustedDays] = useState(null);
-  const [rejectedDates, setRejectedDates] = useState([]);
+  const [leaveAdjustments, setLeaveAdjustments] = useState({});
+  const [showConfirmationDialog, setShowConfirmationDialog] = useState(false);
+  const [confirmationData, setConfirmationData] = useState(null);
+
   const { handleViewFile, error: fileError } = useFileHandler(
     selectedLeave?.medicalCertificate?._id
   );
@@ -81,7 +83,6 @@ function LeaveList() {
       setDepartments(res.data);
     } catch (err) {
       console.error("Error fetching departments:", err);
-      //setError("Failed to load departments. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -115,6 +116,8 @@ function LeaveList() {
           ...filterParams,
           page: currentPage,
           limit: itemsPerPage,
+          leaveType: filterParams.leaveType === "all" ? undefined : filterParams.leaveType,
+          employeeId: filterParams.employeeId === "all" ? undefined : filterParams.employeeId,
         };
         if (normalizedFilters.fromDate && !normalizedFilters.toDate) {
           normalizedFilters.toDate = normalizedFilters.fromDate;
@@ -136,8 +139,8 @@ function LeaveList() {
           delete normalizedFilters.departmentId;
         } else if (user?.loginType === "HOD" && viewMode === "approval") {
           normalizedFilters.departmentId = user?.department?._id;
-          if (normalizedFilters.employeeId === user?.employeeId) {
-            normalizedFilters.employeeId = "";
+          if (normalizedFilters.employeeId === "all" || normalizedFilters.employeeId === user?.employeeId) {
+            delete normalizedFilters.employeeId;
           }
         }
         const res = await api.get("/leaves", { params: normalizedFilters });
@@ -168,11 +171,9 @@ function LeaveList() {
     [currentPage, itemsPerPage, user, viewMode]
   );
 
-  // Consolidated useEffect for initialization and viewMode changes
   useEffect(() => {
     if (!user) return;
 
-    // Set filters based on user type and viewMode
     let newFilters = { ...initialFilters };
     let departmentIdForEmployees = null;
 
@@ -192,23 +193,29 @@ function LeaveList() {
       };
     }
 
-    // Update filters and tempFilters
     setFilters(newFilters);
     setTempFilters(newFilters);
 
-    // Fetch data
     fetchDepartments();
     fetchEmployees(departmentIdForEmployees);
     fetchLeaves(newFilters);
   }, [user, viewMode, fetchDepartments, fetchEmployees, fetchLeaves, initialFilters]);
 
-  // useEffect for fetching leaves when filters, page, or itemsPerPage change
   useEffect(() => {
     fetchLeaves(filters);
   }, [filters, currentPage, itemsPerPage, fetchLeaves]);
 
   const handleChange = (name, value) => {
-    setTempFilters({ ...tempFilters, [name]: value });
+    setTempFilters((prev) => {
+      const newFilters = { ...prev, [name]: value };
+      if (name === "employeeId" && value === "all") {
+        newFilters.employeeName = "";
+      } else if (name === "employeeId") {
+        const selectedEmployee = employees.find(emp => emp.employeeId === value);
+        newFilters.employeeName = selectedEmployee?.name || "";
+      }
+      return newFilters;
+    });
   };
 
   const handleEmployeeSearch = (value) => {
@@ -233,56 +240,112 @@ function LeaveList() {
     fetchLeaves(tempFilters);
   };
 
-  const handleApproval = async (id, status, currentStage, remarks = "", days = null, rejectedDates = []) => {
-    try {
-      const leaveData = { status };
-      if (days !== null) {
-        leaveData.approvedDays = days;
-        leaveData.rejectedDates = rejectedDates;
+  const handleAdjustmentChange = (leaveId, field, value, maxDays) => {
+    setLeaveAdjustments((prev) => {
+      const newAdjustments = { ...prev, [leaveId]: { ...prev[leaveId], [field]: value } };
+      if (field === "adjustedDays" && value !== null && value <= maxDays) {
+        const leave = leaves.find(l => l._id === leaveId);
+        const leaveDates = getLeaveDates(leave);
+        newAdjustments[leaveId].approvedDates = leaveDates.slice(0, value);
+      } else if (field === "adjustedDays" && (value === null || value > maxDays)) {
+        newAdjustments[leaveId].approvedDates = [];
       }
-      if (status === "Rejected" && ["hod", "ceo"].includes(currentStage)) {
+      return newAdjustments;
+    });
+  };
+
+const handleApproval = async (id, status, currentStage, remarks = "", days = null, approvedDates = []) => {
+  try {
+    const leaveData = { status };
+    const leave = leaves.find(l => l._id === id);
+    const totalDays = getLeaveDuration(leave);
+    const allLeaveDates = getLeaveDates(leave);
+    let rejectedDates = []; // Define rejectedDates at the top level
+
+    if (days !== null && approvedDates.length) {
+      leaveData.approvedDays = days;
+      leaveData.approvedDates = approvedDates.map(date => ({
+        date: date,
+        duration: leave.approvedDates?.find(ad => ad.date === date)?.duration || 'full'
+      }));
+      rejectedDates = allLeaveDates.filter(d => !approvedDates.includes(d)); // Update rejectedDates
+      leaveData.rejectedDates = rejectedDates.map(date => ({
+        date: date,
+        duration: leave.rejectedDates?.find(rd => rd.date === date)?.duration || 'full'
+      }));
+      if (rejectedDates.length > 0) {
         if (!remarks.trim()) {
-          alert("Remarks are required for rejection.");
+          setError("Remarks are required when rejecting partial days.");
           return;
         }
-        leaveData.remarks = remarks;
+        leaveData.remarks = remarks; // Explicitly set remarks for partial rejection
+        console.log("Partial rejection data sent:", { ...leaveData, remarks }); // Debug log
       }
-      await api.put(`/leaves/${id}/approve`, leaveData);
-      const updatedLeaves = leaves.map((l) => {
-        if (l._id === id) {
-          const newStatus = { ...l.status, [currentStage]: status };
-          if (status === "Approved") {
-            if (currentStage === "hod") {
-              newStatus.ceo = "Pending";
-            } else if (currentStage === "ceo") {
-              newStatus.admin = "Pending";
-            }
-          } else if (status === "Rejected") {
-            newStatus.hod = "N/A";
-            newStatus.ceo = "N/A";
-            newStatus.admin = "N/A";
-          }
-          return {
-            ...l,
-            status: newStatus,
-            remarks: status === "Rejected" ? remarks : l.remarks,
-            approvedDays: days !== null ? days : l.approvedDays,
-            rejectedDates: rejectedDates.length ? rejectedDates : l.rejectedDates || [],
-          };
-        }
-        return l;
-      });
-      setLeaves(updatedLeaves);
-      alert(`Leave ${status.toLowerCase()} successfully${days !== null ? ` for ${days} days` : ""}.`);
-    } catch (err) {
-      console.error("Approval error:", err);
-      alert(
-        `Error processing leave approval: ${
-          err.response?.data?.message || err.message
-        }`
-      );
+    } else if (status === "Approved") {
+      leaveData.approvedDates = allLeaveDates.map(date => ({
+        date: date,
+        duration: 'full'
+      }));
+      leaveData.rejectedDates = [];
+    } else if (status === "Rejected") {
+      leaveData.rejectedDates = allLeaveDates.map(date => ({
+        date: date,
+        duration: 'full'
+      }));
+      leaveData.approvedDates = [];
+      if (!remarks.trim()) {
+        setError("Remarks are required for rejection.");
+        return;
+      }
+      leaveData.remarks = remarks; // Explicitly set remarks for full rejection
+      console.log("Full rejection data sent:", { ...leaveData, remarks }); // Debug log
     }
-  };
+
+    if (status === "Rejected" && ["hod", "ceo"].includes(currentStage) && !remarks.trim()) {
+      setError("Remarks are required for rejection.");
+      return;
+    }
+
+    // Send the request and log the response
+    const response = await api.put(`/leaves/${id}/approve`, leaveData);
+    console.log("API response:", response.data); // Debug API response
+
+    const updatedLeaves = leaves.map((l) => {
+      if (l._id === id) {
+        const newStatus = { ...l.status, [currentStage]: status };
+        if (status === "Approved") {
+          if (currentStage === "hod") {
+            newStatus.ceo = "Pending";
+          } else if (currentStage === "ceo") {
+            newStatus.admin = "Pending";
+          }
+        } else if (status === "Rejected") {
+          newStatus.hod = "N/A";
+          newStatus.ceo = "N/A";
+          newStatus.admin = "N/A";
+        }
+        return {
+          ...l,
+          status: newStatus,
+          remarks: (status === "Rejected" || (days !== null && rejectedDates.length > 0)) ? remarks : l.remarks,
+          approvedDates: leaveData.approvedDates || [],
+          rejectedDates: leaveData.rejectedDates || [],
+        };
+      }
+      return l;
+    });
+    setLeaves(updatedLeaves);
+    alert(`Leave ${status.toLowerCase()} successfully${days !== null ? ` for ${days} days` : ""}.`);
+  } catch (err) {
+    console.error("Approval error:", err);
+    setError(
+      `Error processing leave approval: ${err.response?.data?.message || err.message}`
+    );
+  } finally {
+    setShowConfirmationDialog(false);
+    setConfirmationData(null);
+  }
+};
 
   const handleRejection = (id, stage) => {
     setPendingRejection({ id, stage });
@@ -292,7 +355,7 @@ function LeaveList() {
 
   const confirmRejection = () => {
     if (!rejectionRemarks.trim()) {
-      alert("Please enter remarks for rejection.");
+      setError("Please enter remarks for rejection.");
       return;
     }
     handleApproval(
@@ -364,6 +427,18 @@ function LeaveList() {
     return dates;
   };
 
+  const isEmergencyLeave = (leave) => {
+    const createdAt = new Date(leave.createdAt).toISOString().split('T')[0];
+    const leaveDates = getLeaveDates(leave);
+    return leaveDates.includes(createdAt) && leave.status?.hod === 'Pending';
+  };
+
+  const emergencyLeaveCount = useMemo(() => {
+    return leaves.filter(leave =>
+      isEmergencyLeave(leave) && leave.status?.hod === 'Pending'
+    ).length;
+  }, [leaves]);
+
   const formatDurationDisplay = (days) => {
     return `${days} day${days === 1 ? "" : "s"}`;
   };
@@ -407,8 +482,14 @@ function LeaveList() {
   }, [leaves]);
 
   const filteredGroupedLeaves = useMemo(() => {
+    let filtered = groupedLeaves;
+    if (user?.loginType === "CEO") {
+      filtered = filtered.filter((group) =>
+        !group.leaves.some((leave) => leave.leaveType === "Medical" && !leave.medicalCertificate)
+      );
+    }
     if (user?.loginType === "HOD" && viewMode === "approval" && user?.employeeId) {
-      return groupedLeaves
+      filtered = filtered
         .filter((group) => {
           const isHodLeave = group.leaves.some(
             (leave) =>
@@ -435,7 +516,7 @@ function LeaveList() {
           return bDate - aDate;
         });
     }
-    return groupedLeaves.sort((a, b) => {
+    return filtered.sort((a, b) => {
       const aDate = new Date(
         Math.max(
           ...a.leaves.map((l) =>
@@ -472,6 +553,56 @@ function LeaveList() {
     return result;
   }, [employees, tempFilters.departmentId]);
 
+  const getLeaveTypeBadge = (leaveType) => (
+    <span
+      className={`inline-block px-2 py-1 rounded-md text-sm mr-1 mb-1 ${
+        leaveType === "Leave Without Pay(LWP)"
+          ? "bg-red-100 text-red-800"
+          : leaveType === "Casual"
+          ? "bg-blue-100 text-blue-800"
+          : leaveType === "Medical"
+          ? "bg-green-100 text-green-800"
+          : leaveType === "Restricted Holidays"
+          ? "bg-orange-100 text-orange-800"
+          : leaveType === "Maternity"
+          ? "bg-pink-100 text-pink-800"
+          : leaveType === "Paternity"
+          ? "bg-purple-100 text-purple-800"
+          : leaveType === "Compensatory"
+          ? "bg-yellow-100 text-yellow-800"
+          : "bg-gray-100 text-gray-800"
+      }`}
+    >
+      {leaveType === "Leave Without Pay(LWP)"
+        ? "LWP"
+        : leaveType === "Casual"
+        ? "CL"
+        : leaveType === "Medical"
+        ? "ML"
+        : leaveType === "Restricted Holidays"
+        ? "RH"
+        : leaveType}
+    </span>
+  );
+
+// Update the triggerConfirmation function
+const triggerConfirmation = (id, status, currentStage, remarks = "", days = null, approvedDates = []) => {
+  const leave = leaves.find(l => l._id === id);
+  if (!leave) return; // Prevent further execution if leave is not found
+  const totalDays = getLeaveDuration(leave) || 0;
+  const rejectedDates = getLeaveDates(leave).filter(d => !approvedDates.includes(d)) || [];
+  setConfirmationData({ 
+    id, 
+    status, 
+    currentStage, 
+    remarks, 
+    days: days !== null ? days : totalDays, 
+    approvedDates: approvedDates || [], 
+    rejectedDates, 
+    totalDays 
+  });
+  setShowConfirmationDialog(true);
+};
   return (
     <ContentLayout title="Leave List">
       <div className="bg-white">
@@ -483,6 +614,9 @@ function LeaveList() {
                 <strong>{short}:</strong> {full}
               </span>
             ))}
+          </div>
+          <div className="mt-2 text-sm font-medium text-red-600">
+            Emergency Leaves: {emergencyLeaveCount}
           </div>
         </div>
         <Card>
@@ -499,26 +633,7 @@ function LeaveList() {
             )}
             {user?.loginType === "HOD" && (
               <div className="mb-4 flex gap-4">
-                {/* <Button
-                  onClick={() => setViewMode("approval")}
-                  className={`px-4 py-2 rounded-lg ${
-                    viewMode === "approval"
-                      ? "bg-blue-600 text-white"
-                      : "bg-blue-600 text-gray-700"
-                  } hover:bg-gray-600 text-white transition-colors`}
-                >
-                  Approval Requests
-                </Button> */}
-                {/* <Button
-                  onClick={() => setViewMode("own")}
-                  className={`px-4 py-2 rounded-lg ${
-                    viewMode === "own"
-                      ? "bg-green-600 text-white"
-                      : "bg-blue-600 text-gray-700"
-                  } hover:bg-gray-600 text-white transition-colors`}
-                >
-                  My Leave Requests
-                </Button> */}
+                {/* View mode buttons commented out as per original code */}
               </div>
             )}
             <motion.div
@@ -721,13 +836,13 @@ function LeaveList() {
                   </SelectTrigger>
                   <SelectContent className="z-50">
                     <SelectItem value="all">All</SelectItem>
-                    <SelectItem value="CL">CL</SelectItem>
-                    <SelectItem value="ML">ML</SelectItem>
+                    <SelectItem value="Casual">CL</SelectItem>
+                    <SelectItem value="Medical">ML</SelectItem>
                     <SelectItem value="Maternity">Maternity</SelectItem>
                     <SelectItem value="Paternity">Paternity</SelectItem>
                     <SelectItem value="Compensatory">Compensatory</SelectItem>
-                    <SelectItem value="RH">RH</SelectItem>
-                    <SelectItem value="LWP">LWP</SelectItem>
+                    <SelectItem value="Restricted Holidays">RH</SelectItem>
+                    <SelectItem value="Leave Without Pay(LWP)">LWP</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -863,6 +978,7 @@ function LeaveList() {
                   ) : (
                     filteredGroupedLeaves.map((group) => {
                       const firstLeave = group.leaves[0];
+                      const isEmergency = group.leaves.some(isEmergencyLeave);
                       const dateRange = group.composite
                         ? `${formatISTDate(
                             Math.min(
@@ -888,12 +1004,12 @@ function LeaveList() {
                       return (
                         <TableRow
                           key={group._id}
-                          className="hover:bg-gray-50 border-b"
+                          className={`hover:bg-gray-50 border-b ${isEmergency ? 'text-red-700' : ''}`}
                         >
                           <TableCell className="px-4 py-3">
-                            <div>{firstLeave.name}</div>
+                            <div className={group.composite ? "pl-2" : ""}>{firstLeave.name}</div>
                             {group.composite && (
-                              <div className="mt-1">
+                              <div className="mt-1 pl-2">
                                 <span className="text-xs text-red-800 px-2 py-1 rounded-full">
                                   {/* Composite ({group.leaves.length} leaves) */}
                                 </span>
@@ -905,47 +1021,8 @@ function LeaveList() {
                           </TableCell>
                           <TableCell className="px-4 py-3">
                             {group.composite
-                              ? group.leaves.map((l) => (
-                                  <span
-                                    key={l._id}
-                                    className={`inline-block px-2 py-1 rounded-md text-sm mr-1 mb-1 ${
-                                      l.leaveType === "Leave Without Pay(LWP)"
-                                        ? "bg-red-100 text-red-800"
-                                        : l.leaveType === "Casual"
-                                        ? "bg-blue-100 text-blue-800"
-                                        : l.leaveType === "Medical"
-                                        ? "bg-green-100 text-green-800"
-                                        : l.leaveType === "Restricted Holidays"
-                                        ? "bg-orange-100 text-orange-800"
-                                        : l.leaveType === "Maternity"
-                                        ? "bg-pink-100 text-pink-800"
-                                        : l.leaveType === "Paternity"
-                                        ? "bg-purple-100 text-purple-800"
-                                        : l.leaveType === "Compensatory"
-                                        ? "bg-yellow-100 text-yellow-800"
-                                        : "bg-gray-100 text-gray-800"
-                                    }`}
-                                  >
-                                    {l.leaveType === "Leave Without Pay(LWP)"
-                                      ? "LWP"
-                                      : l.leaveType === "Casual"
-                                      ? "CL"
-                                      : l.leaveType === "Medical"
-                                      ? "ML"
-                                      : l.leaveType === "Restricted Holidays"
-                                      ? "RH"
-                                      : l.leaveType}
-                                  </span>
-                                ))
-                              : firstLeave.leaveType === "Leave Without Pay(LWP)"
-                              ? "LWP"
-                              : firstLeave.leaveType === "Casual"
-                              ? "CL"
-                              : firstLeave.leaveType === "Medical"
-                              ? "ML"
-                              : firstLeave.leaveType === "Restricted Holidays"
-                              ? "RH"
-                              : firstLeave.leaveType}
+                              ? group.leaves.map((l) => getLeaveTypeBadge(l.leaveType))
+                              : getLeaveTypeBadge(firstLeave.leaveType)}
                           </TableCell>
                           <TableCell className="px-4 py-3">{dateRange}</TableCell>
                           <TableCell className="px-4 py-3">
@@ -953,8 +1030,7 @@ function LeaveList() {
                               size="sm"
                               onClick={() => {
                                 setSelectedLeave(group.composite ? group : group.leaves[0]);
-                                setAdjustedDays(null);
-                                setRejectedDates([]);
+                                setLeaveAdjustments({});
                               }}
                               className="bg-blue-600 text-white hover:bg-blue-700 rounded-md"
                             >
@@ -966,9 +1042,7 @@ function LeaveList() {
                               ? group.leaves.map((leave, index) => (
                                   <div
                                     key={leave._id}
-                                    className={`py-1 ${
-                                      index % 2 === 0 ? "bg-gray-50" : "bg-white"
-                                    }`}
+                                    className={`py-1 ${index % 2 === 0 ? "text-purple-600" : "bg-white"}`}
                                   >
                                     {leave.status.hod || "Pending"}
                                   </div>
@@ -980,9 +1054,7 @@ function LeaveList() {
                               ? group.leaves.map((leave, index) => (
                                   <div
                                     key={leave._id}
-                                    className={`py-1 ${
-                                      index % 2 === 0 ? "bg-gray-50" : "bg-white"
-                                    }`}
+                                    className={`py-1 ${index % 2 === 0 ? "text-purple-600" : "bg-white"}`}
                                   >
                                     {leave.status.ceo || "Pending"}
                                   </div>
@@ -994,9 +1066,7 @@ function LeaveList() {
                               ? group.leaves.map((leave, index) => (
                                   <div
                                     key={leave._id}
-                                    className={`py-1 ${
-                                      index % 2 === 0 ? "bg-gray-50" : "bg-white"
-                                    }`}
+                                    className={`py-1 ${index % 2 === 0 ? "text-purple-600" : "bg-white"}`}
                                   >
                                     {leave.status.admin || "Pending"}
                                   </div>
@@ -1005,78 +1075,76 @@ function LeaveList() {
                           </TableCell>
                           {["HOD", "Admin", "CEO"].includes(user?.loginType) &&
                             viewMode !== "own" && (
-                              <TableCell className="px-4 py-3 flex flex-col gap-2">
+                              <TableCell className="px-4 py-3">
                                 {group.composite ? (
                                   <div className="space-y-2">
                                     {group.leaves.map((leave, index) => (
                                       <div
                                         key={leave._id}
-                                        className={`flex items-center gap-2 py-1 ${
-                                          index % 2 === 0 ? "bg-gray-50" : "bg-white"
+                                        className={`flex items-center justify-between gap-2 py-1 ${
+                                          index % 2 === 0 ? "bg-gray-100" : "bg-white"
                                         }`}
                                       >
-                                        <span className="text-sm text-gray-600">
-                                          {leave.leaveType}:
-                                        </span>
-                                        {user.loginType === "HOD" &&
-                                          leave.status.hod === "Pending" && (
-                                            <div className="flex gap-2">
-                                              <Button
-                                                variant="default"
-                                                size="sm"
-                                                className="bg-green-600 hover:bg-green-700 text-white rounded-md"
-                                                onClick={() =>
-                                                  handleApproval(leave._id, "Approved", "hod")
-                                                }
-                                                disabled={loading || leave.status.hod !== "Pending"}
-                                                aria-label={`Approve ${leave.leaveType} leave ${leave._id} for ${leave.name}`}
-                                              >
-                                                Approve
-                                              </Button>
-                                              <Button
-                                                variant="destructive"
-                                                size="sm"
-                                                className="bg-red-600 hover:bg-red-700 text-white rounded-md"
-                                                onClick={() => handleRejection(leave._id, "hod")}
-                                                disabled={loading || leave.status.hod !== "Pending"}
-                                                aria-label={`Reject ${leave.leaveType} leave ${leave._id} for ${leave.name}`}
-                                              >
-                                                Reject
-                                              </Button>
-                                            </div>
-                                          )}
-                                        {user.loginType === "CEO" &&
-                                          ["Approved", "Submitted"].includes(leave.status.hod) &&
-                                          leave.status.ceo === "Pending" && (
-                                            <div className="flex gap-2">
-                                              <Button
-                                                variant="default"
-                                                size="sm"
-                                                className="bg-green-600 hover:bg-green-700 text-white rounded-md"
-                                                onClick={() =>
-                                                  handleApproval(leave._id, "Approved", "ceo")
-                                                }
-                                                disabled={loading || leave.status.ceo !== "Pending"}
-                                                aria-label={`Approve ${leave.leaveType} leave ${leave._id} for ${leave.name}`}
-                                              >
-                                                Approve
-                                              </Button>
-                                              <Button
-                                                variant="destructive"
-                                                size="sm"
-                                                className="bg-red-600 hover:bg-red-700 text-white rounded-md"
-                                                onClick={() => handleRejection(leave._id, "ceo")}
-                                                disabled={loading || leave.status.ceo !== "Pending"}
-                                                aria-label={`Reject ${leave.leaveType} leave ${leave._id} for ${leave.name}`}
-                                              >
-                                                Reject
-                                              </Button>
-                                            </div>
-                                          )}
-                                        {user.loginType === "Admin" &&
-                                          leave.status.ceo === "Approved" &&
-                                          leave.status.admin === "Pending" && (
-                                            <div className="flex gap-2">
+                                        <div className="flex items-center gap-2">
+                                          {getLeaveTypeBadge(leave.leaveType)}
+                                          {user.loginType === "HOD" &&
+                                            leave.status.hod === "Pending" && (
+                                              <>
+                                                <Button
+                                                  variant="default"
+                                                  size="sm"
+                                                  className="bg-green-600 hover:bg-green-700 text-white rounded-md"
+                                                  onClick={() =>
+                                                    triggerConfirmation(leave._id, "Approved", "hod", "", leaveAdjustments[leave._id]?.adjustedDays !== undefined ? leaveAdjustments[leave._id].adjustedDays : getLeaveDuration(leave), leaveAdjustments[leave._id]?.approvedDates || [])
+                                                  }
+                                                  disabled={loading || leave.status.hod !== "Pending"}
+                                                  aria-label={`Approve ${leave.leaveType} leave ${leave._id} for ${leave.name}`}
+                                                >
+                                                  Approve
+                                                </Button>
+                                                <Button
+                                                  variant="destructive"
+                                                  size="sm"
+                                                  className="bg-red-600 hover:bg-red-700 text-white rounded-md"
+                                                  onClick={() => handleRejection(leave._id, "hod")}
+                                                  disabled={loading || leave.status.hod !== "Pending"}
+                                                  aria-label={`Reject ${leave.leaveType} leave ${leave._id} for ${leave.name}`}
+                                                >
+                                                  Reject
+                                                </Button>
+                                              </>
+                                            )}
+                                          {user.loginType === "CEO" &&
+                                            ["Approved", "Submitted"].includes(leave.status.hod) &&
+                                            leave.status.ceo === "Pending" && (
+                                              <>
+                                                <Button
+                                                  variant="default"
+                                                  size="sm"
+                                                  className="bg-green-600 hover:bg-green-700 text-white rounded-md"
+                                                  onClick={() =>
+                                                    triggerConfirmation(leave._id, "Approved", "ceo")
+                                                  }
+                                                  disabled={loading || leave.status.ceo !== "Pending"}
+                                                  aria-label={`Approve ${leave.leaveType} leave ${leave._id} for ${leave.name}`}
+                                                >
+                                                  Approve
+                                                </Button>
+                                                <Button
+                                                  variant="destructive"
+                                                  size="sm"
+                                                  className="bg-red-600 hover:bg-red-700 text-white rounded-md"
+                                                  onClick={() => handleRejection(leave._id, "ceo")}
+                                                  disabled={loading || leave.status.ceo !== "Pending"}
+                                                  aria-label={`Reject ${leave.leaveType} leave ${leave._id} for ${leave.name}`}
+                                                >
+                                                  Reject
+                                                </Button>
+                                              </>
+                                            )}
+                                          {user.loginType === "Admin" &&
+                                            leave.status.ceo === "Approved" &&
+                                            leave.status.admin === "Pending" && (
                                               <Button
                                                 variant="default"
                                                 size="sm"
@@ -1088,86 +1156,75 @@ function LeaveList() {
                                                     "admin"
                                                   )
                                                 }
-                                                disabled={
-                                                  loading || leave.status.admin !== "Pending"
-                                                }
+                                                disabled={loading || leave.status.admin !== "Pending"}
                                                 aria-label={`Acknowledge ${leave.leaveType} leave ${leave._id} for ${leave.name}`}
                                               >
                                                 Acknowledge
                                               </Button>
-                                            </div>
-                                          )}
-                                        {(leave.status.hod === "Approved" ||
-                                          leave.status.hod === "Rejected") &&
-                                          user.loginType === "HOD" && (
-                                            <span className="text-sm text-gray-500">
-                                              Action Completed
-                                            </span>
-                                          )}
-                                        {(leave.status.ceo === "Approved" ||
-                                          leave.status.ceo === "Rejected") &&
-                                          user.loginType === "CEO" && (
-                                            <span className="text-sm text-gray-500">
-                                              Action Completed
-                                            </span>
-                                          )}
-                                        {(leave.status.admin === "Acknowledged" ||
-                                          leave.status.admin === "Rejected") &&
-                                          user.loginType === "Admin" && (
-                                            <span className="text-sm text-gray-500">
-                                              Action Completed
-                                            </span>
-                                          )}
+                                            )}
+                                          {(leave.status.hod !== "Pending" &&
+                                            leave.status.hod !== "Submitted") && (
+                                              <span className="text-sm text-gray-500">
+                                                Action Completed
+                                              </span>
+                                            )}
+                                          {(leave.status.ceo !== "Pending" &&
+                                            leave.status.ceo !== "Submitted") && (
+                                              <span className="text-sm text-gray-500">
+                                                Action Completed
+                                              </span>
+                                            )}
+                                          {(leave.status.admin !== "Pending" &&
+                                            leave.status.admin !== "Submitted") && (
+                                              <span className="text-sm text-gray-500">
+                                                Action Completed
+                                              </span>
+                                            )}
+                                        </div>
                                       </div>
                                     ))}
                                   </div>
                                 ) : (
-                                  <>
-                                    {user.loginType === "HOD" &&
-                                      firstLeave.status.hod === "Pending" && (
-                                        <div className="flex gap-2">
-                                          <Button
-                                            variant="default"
-                                            size="sm"
-                                            className="bg-green-600 hover:bg-green-700 text-white rounded-md"
-                                            onClick={() =>
-                                              handleApproval(firstLeave._id, "Approved", "hod")
-                                            }
-                                            disabled={
-                                              loading || firstLeave.status.hod !== "Pending"
-                                            }
-                                            aria-label={`Approve ${firstLeave.leaveType} leave ${firstLeave._id} for ${firstLeave.name}`}
-                                          >
-                                            Approve
-                                          </Button>
-                                          <Button
-                                            variant="destructive"
-                                            size="sm"
-                                            className="bg-red-600 hover:bg-red-700 text-white rounded-md"
-                                            onClick={() => handleRejection(firstLeave._id, "hod")}
-                                            disabled={
-                                              loading || firstLeave.status.hod !== "Pending"
-                                            }
-                                            aria-label={`Reject ${firstLeave.leaveType} leave ${firstLeave._id} for ${firstLeave.name}`}
-                                          >
-                                            Reject
-                                          </Button>
-                                        </div>
-                                      )}
+                                  <div className="flex items-center gap-2">
+                                    {getLeaveTypeBadge(firstLeave.leaveType)}
+                                    {user.loginType === "HOD" && firstLeave.status.hod === "Pending" && (
+                                      <>
+                                        <Button
+                                          variant="default"
+                                          size="sm"
+                                          className="bg-green-600 hover:bg-green-700 text-white rounded-md"
+                                          onClick={() =>
+                                            triggerConfirmation(firstLeave._id, "Approved", "hod", "", leaveAdjustments[firstLeave._id]?.adjustedDays !== undefined ? leaveAdjustments[firstLeave._id].adjustedDays : getLeaveDuration(firstLeave), leaveAdjustments[firstLeave._id]?.approvedDates || [])
+                                          }
+                                          disabled={loading || firstLeave.status.hod !== "Pending"}
+                                          aria-label={`Approve ${firstLeave.leaveType} leave ${firstLeave._id} for ${firstLeave.name}`}
+                                        >
+                                          Approve
+                                        </Button>
+                                        <Button
+                                          variant="destructive"
+                                          size="sm"
+                                          className="bg-red-600 hover:bg-red-700 text-white rounded-md"
+                                          onClick={() => handleRejection(firstLeave._id, "hod")}
+                                          disabled={loading || firstLeave.status.hod !== "Pending"}
+                                          aria-label={`Reject ${firstLeave.leaveType} leave ${firstLeave._id} for ${firstLeave.name}`}
+                                        >
+                                          Reject
+                                        </Button>
+                                      </>
+                                    )}
                                     {user.loginType === "CEO" &&
                                       ["Approved", "Submitted"].includes(firstLeave.status.hod) &&
                                       firstLeave.status.ceo === "Pending" && (
-                                        <div className="flex gap-2">
+                                        <>
                                           <Button
                                             variant="default"
                                             size="sm"
                                             className="bg-green-600 hover:bg-green-700 text-white rounded-md"
                                             onClick={() =>
-                                              handleApproval(firstLeave._id, "Approved", "ceo")
+                                              triggerConfirmation(firstLeave._id, "Approved", "ceo")
                                             }
-                                            disabled={
-                                              loading || firstLeave.status.ceo !== "Pending"
-                                            }
+                                            disabled={loading || firstLeave.status.ceo !== "Pending"}
                                             aria-label={`Approve ${firstLeave.leaveType} leave ${firstLeave._id} for ${firstLeave.name}`}
                                           >
                                             Approve
@@ -1177,101 +1234,92 @@ function LeaveList() {
                                             size="sm"
                                             className="bg-red-600 hover:bg-red-700 text-white rounded-md"
                                             onClick={() => handleRejection(firstLeave._id, "ceo")}
-                                            disabled={
-                                              loading || firstLeave.status.ceo !== "Pending"
-                                            }
+                                            disabled={loading || firstLeave.status.ceo !== "Pending"}
                                             aria-label={`Reject ${firstLeave.leaveType} leave ${firstLeave._id} for ${firstLeave.name}`}
                                           >
                                             Reject
                                           </Button>
-                                        </div>
+                                        </>
                                       )}
                                     {user.loginType === "Admin" &&
                                       firstLeave.status.ceo === "Approved" &&
                                       firstLeave.status.admin === "Pending" && (
-                                        <div className="flex gap-2">
-                                          <Button
-                                            variant="default"
-                                            size="sm"
-                                            className="bg-green-600 hover:bg-green-700 text-white rounded-md"
-                                            onClick={() =>
-                                              handleApproval(
-                                                firstLeave._id,
-                                                "Acknowledged",
-                                                "admin"
-                                              )
-                                            }
-                                            disabled={
-                                              loading || firstLeave.status.admin !== "Pending"
-                                            }
-                                            aria-label={`Acknowledge ${firstLeave.leaveType} leave ${firstLeave._id} for ${firstLeave.name}`}
-                                          >
-                                            Acknowledge
-                                          </Button>
-                                        </div>
+                                        <Button
+                                          variant="default"
+                                          size="sm"
+                                          className="bg-green-600 hover:bg-green-700 text-white rounded-md"
+                                          onClick={() =>
+                                            handleApproval(
+                                              firstLeave._id,
+                                              "Acknowledged",
+                                              "admin"
+                                            )
+                                          }
+                                          disabled={loading || firstLeave.status.admin !== "Pending"}
+                                          aria-label={`Acknowledge ${firstLeave.leaveType} leave ${firstLeave._id} for ${firstLeave.name}`}
+                                        >
+                                          Acknowledge
+                                        </Button>
                                       )}
-                                    {(firstLeave.status.hod === "Approved" ||
-                                      firstLeave.status.hod === "Rejected") &&
-                                      user.loginType === "HOD" && (
+                                    {(firstLeave.status.hod !== "Pending" &&
+                                      firstLeave.status.hod !== "Submitted") && (
                                         <span className="text-sm text-gray-500">
                                           Action Completed
                                         </span>
                                       )}
-                                    {(firstLeave.status.ceo === "Approved" ||
-                                      firstLeave.status.ceo === "Rejected") &&
-                                      user.loginType === "CEO" && (
+                                    {(firstLeave.status.ceo !== "Pending" &&
+                                      firstLeave.status.ceo !== "Submitted") && (
                                         <span className="text-sm text-gray-500">
                                           Action Completed
                                         </span>
                                       )}
-                                    {(firstLeave.status.admin === "Acknowledged" ||
-                                      firstLeave.status.admin === "Rejected") &&
-                                      user.loginType === "Admin" && (
+                                    {(firstLeave.status.admin !== "Pending" &&
+                                      firstLeave.status.admin !== "Submitted") && (
                                         <span className="text-sm text-gray-500">
                                           Action Completed
                                         </span>
                                       )}
-                                  </>
+                                  </div>
                                 )}
                               </TableCell>
                             )}
-                          <TableCell className="px-4 py-3">
-                            {group.composite ? (
-                              <div className="space-y-1">
-                                {group.leaves.map((leave) => (
-                                  <div key={leave._id} className="text-sm">
-                                    {(leave.status.hod === "Rejected" ||
-                                      leave.status.ceo === "Rejected" ||
-                                      leave.status.admin === "Rejected") && (
-                                      <Button
-                                        size="sm"
-                                        onClick={() => {
-                                          setSelectedRemarkLeave(leave);
-                                          setShowRemarksDialog(true);
-                                        }}
-                                        className="bg-blue-600 text-white hover:bg-blue-700 rounded-md"
-                                      >
-                                        View Remarks
-                                      </Button>
-                                    )}
-                                  </div>
-                                ))}
-                              </div>
-                            ) : (firstLeave.status.hod === "Rejected" ||
-                                firstLeave.status.ceo === "Rejected" ||
-                                firstLeave.status.admin === "Rejected") && (
-                              <Button
-                                size="sm"
-                                onClick={() => {
-                                  setSelectedRemarkLeave(firstLeave);
-                                  setShowRemarksDialog(true);
-                                }}
-                                className="bg-blue-600 text-white hover:bg-blue-700 rounded-md"
-                              >
-                                View Remarks
-                              </Button>
-                            )}
-                          </TableCell>
+<TableCell className="px-4 py-3">
+  {group.composite ? (
+    <div className="space-y-1">
+      {group.leaves.map((leave) => (
+        <div key={leave._id} className="text-sm">
+          {(leave.remarks && leave.remarks !== 'N/A' || leave.rejectedDates.length > 0) ? (
+            <Button
+              size="sm"
+              onClick={() => {
+                setSelectedRemarkLeave(leave);
+                setShowRemarksDialog(true);
+              }}
+              className="bg-blue-600 text-white hover:bg-blue-700 rounded-md"
+            >
+              View Remarks
+            </Button>
+          ) : (
+            <span>-</span>
+          )}
+        </div>
+      ))}
+    </div>
+  ) : (firstLeave.remarks && firstLeave.remarks !== 'N/A' || firstLeave.rejectedDates.length > 0) ? (
+    <Button
+      size="sm"
+      onClick={() => {
+        setSelectedRemarkLeave(firstLeave);
+        setShowRemarksDialog(true);
+      }}
+      className="bg-blue-600 text-white hover:bg-blue-700 rounded-md"
+    >
+      View Remarks
+    </Button>
+  ) : (
+    <span>-</span>
+  )}
+</TableCell>
                         </TableRow>
                       );
                     })
@@ -1292,568 +1340,611 @@ function LeaveList() {
                 open={!!selectedLeave}
                 onOpenChange={() => {
                   setSelectedLeave(null);
-                  setAdjustedDays(null);
-                  setRejectedDates([]);
+                  setLeaveAdjustments({});
                 }}
               >
-                <DialogContent className="max-w-3xl">
-                  <DialogHeader>
-                    <DialogTitle>Leave Application Details</DialogTitle>
-                    <DialogDescription>
-                      {selectedLeave?.composite
-                        ? "Details of the composite leave application."
-                        : "Details of the selected leave application."}
-                    </DialogDescription>
-                  </DialogHeader>
-                  {selectedLeave && (
-                    <div className="space-y-4">
-                      <div className="border p-4 rounded-lg bg-gray-50">
-                        <p className="text-sm font-medium text-gray-700">
-                          <strong>Leave Application Date:</strong>{" "}
-                          {formatISTDate(
-                            selectedLeave.composite
-                              ? Math.min(
-                                  ...selectedLeave.leaves.map((l) =>
-                                    new Date(l.createdAt)
-                                  )
-                                )
-                              : selectedLeave.createdAt
-                          )}
-                        </p>
-                      </div>
-                      {selectedLeave.composite ? (
-                        selectedLeave.leaves.map((leave, index) => (
-                          <div
-                            key={leave._id}
-                            className="border p-4 rounded-lg bg-gray-50 mb-4 last:mb-0"
-                          >
-                            <h3 className="font-semibold text-lg mb-2">
-                              Leave {index + 1}:{" "}
-                              {leave.leaveType === "Leave Without Pay(LWP)"
-                                ? "LWP"
-                                : leave.leaveType === "Casual"
-                                ? "CL"
-                                : leave.leaveType === "Medical"
-                                ? "ML"
-                                : leave.leaveType === "Restricted Holidays"
-                                ? "RH"
-                                : leave.leaveType}
-                            </h3>
-                            <div className="grid grid-cols-2 gap-4 text-sm text-gray-700">
-                              <p>
-                                <strong>Leave Duration:</strong>{" "}
-                                {formatDurationDisplay(getLeaveDuration(leave))}
-                              </p>
-                              <p>
-                                <strong>From:</strong>{" "}
-                                {formatISTDate(
-                                  leave.fullDay?.from || leave.halfDay?.date || leave.createdAt
+           <DialogContent className="max-w-4xl max-h-[98vh] overflow-y-auto">
+  <DialogHeader>
+    <DialogTitle>Leave Application Details</DialogTitle>
+    <DialogDescription>
+      {selectedLeave?.composite
+        ? "Details of the composite leave application."
+        : "Details of the selected leave application."}
+    </DialogDescription>
+  </DialogHeader>
+  {selectedLeave && (
+    <div className="space-y-4">
+      <div className="border p-4 rounded-lg bg-gray-50">
+        <p className="text-sm font-medium text-gray-700">
+          <strong>Leave Application Date:</strong>{" "}
+          {formatISTDate(
+            selectedLeave.composite
+              ? Math.min(
+                  ...selectedLeave.leaves.map((l) =>
+                    new Date(l.createdAt)
+                  )
+                )
+              : selectedLeave.createdAt
+          )}
+        </p>
+      </div>
+      {selectedLeave.composite ? (
+        selectedLeave.leaves.map((leave, index) => (
+          <div
+            key={leave._id}
+            className="border p-4 rounded-lg bg-gray-50 mb-4 last:mb-0"
+          >
+            <h3 className="font-semibold text-lg mb-2">
+              {getLeaveTypeBadge(leave.leaveType)}
+            </h3>
+            <div className="grid grid-cols-2 gap-4 text-sm text-gray-700">
+              <p>
+                <strong>Leave Duration:</strong>{" "}
+                {formatDurationDisplay(getLeaveDuration(leave))}
+              </p>
+              <p>
+                <strong>From:</strong>{" "}
+                {formatISTDate(
+                  leave.fullDay?.from || leave.halfDay?.date || leave.createdAt
+                )}
+                {leave.fullDay?.fromDuration === "half" &&
+                  ` (${leave.fullDay.fromSession})`}
+              </p>
+              <p>
+                <strong>To:</strong>{" "}
+                {leave.fullDay?.to
+                  ? `${formatISTDate(leave.fullDay.to)}${
+                      leave.fullDay.toDuration === "half"
+                        ? ` (${leave.fullDay.toSession})`
+                        : ""
+                    }`
+                  : "N/A"}
+              </p>
+              <p>
+                <strong>Reason:</strong> {leave.reason || "N/A"}
+              </p>
+              <p>
+                <strong>Charge Given To:</strong>{" "}
+                {leave.chargeGivenTo?.name || "N/A"}
+              </p>
+              <p>
+                <strong>Emergency Contact:</strong>{" "}
+                {leave.emergencyContact || "N/A"}
+              </p>
+              {leave.compensatoryDate && (
+                <p>
+                  <strong>Compensatory Date:</strong>{" "}
+                  {formatISTDate(leave.compensatoryDate)}
+                </p>
+              )}
+              {leave.projectDetails && (
+                <p>
+                  <strong>Project Details:</strong> {leave.projectDetails}
+                </p>
+              )}
+              {leave.restrictedHoliday && (
+                <p>
+                  <strong>Restricted Holiday:</strong>{" "}
+                  {leave.restrictedHoliday}
+                </p>
+              )}
+              {leave.medicalCertificate && (
+                <p>
+                  <strong>Medical Certificate:</strong>{" "}
+                  <Button
+                    size="sm"
+                    onClick={() =>
+                      handleViewFile(leave.medicalCertificate?._id)
+                    }
+                    className="bg-blue-600 text-white hover:bg-blue-700 rounded-md"
+                    disabled={fileError}
+                  >
+                    View {leave.medicalCertificate.filename}
+                  </Button>
+                </p>
+              )}
+              {leave.approvedDates?.length > 0 && (
+                <p>
+                  <strong>Approved Dates:</strong>{" "}
+                  {leave.approvedDates.map(ad => `${formatISTDate(ad.date)}${ad.duration ? ` (${ad.duration})` : ''}`).join(', ')}
+                </p>
+              )}
+              {leave.rejectedDates?.length > 0 && (
+                <p>
+                  <strong>Rejected Dates:</strong>{" "}
+                  {leave.rejectedDates.map(rd => `${formatISTDate(rd.date)}${rd.duration ? ` (${rd.duration})` : ''}`).join(', ')}
+                </p>
+              )}
+            </div>
+            {user.loginType === "HOD" && leave.status.hod === "Pending" && (
+              <div className="mt-4 flex items-center gap-4">
+                <div className="flex items-center gap-2">
+                  <Label
+                    htmlFor={`adjustedDays-${leave._id}`}
+                    className="text-sm font-medium"
+                  >
+                    Approved Days
+                  </Label>
+                  <Input
+                    id={`adjustedDays-${leave._id}`}
+                    type="number"
+                    min="0"
+                    max={getLeaveDuration(leave)}
+                    value={
+                      leaveAdjustments[leave._id]?.adjustedDays !== undefined
+                        ? leaveAdjustments[leave._id].adjustedDays
+                        : getLeaveDuration(leave)
+                    }
+                    onChange={(e) => {
+                      const newDays = e.target.value ? parseFloat(e.target.value) : null;
+                      handleAdjustmentChange(leave._id, "adjustedDays", newDays, getLeaveDuration(leave));
+                    }}
+                    className="border-gray-300 focus:ring-blue-500 focus:border-blue-500 rounded-md w-24"
+                  />
+                </div>
+                {leaveAdjustments[leave._id]?.adjustedDays !== undefined &&
+                  leaveAdjustments[leave._id]?.adjustedDays < getLeaveDuration(leave) && (
+                    <div className="flex-1">
+                      <Label className="text-sm font-medium">
+                        Approval Time Frame
+                      </Label>
+                      <Select
+                        onValueChange={(value) => {
+                          handleAdjustmentChange(
+                            leave._id,
+                            "approvedDates",
+                            leaveAdjustments[leave._id]?.approvedDates?.includes(value)
+                              ? leaveAdjustments[leave._id].approvedDates.filter((date) => date !== value)
+                              : [...(leaveAdjustments[leave._id]?.approvedDates || []), value],
+                            getLeaveDuration(leave)
+                          );
+                        }}
+                        value=""
+                      >
+                        <SelectTrigger className="border-gray-300 focus:ring-blue-500 focus:border-blue-500 rounded-md">
+                          <SelectValue
+                            placeholder={
+                              leaveAdjustments[leave._id]?.approvedDates?.length > 1
+                                ? "Multiple Days"
+                                : "Single Day"
+                            }
+                          />
+                        </SelectTrigger>
+                        <SelectContent className="z-50">
+                          {getLeaveDates(leave).map((date) => (
+                            <SelectItem key={date} value={date}>
+                              <div className="flex items-center">
+                                {leaveAdjustments[leave._id]?.approvedDates?.includes(date) && (
+                                  <span className="mr-2 text-green-500">✔</span>
                                 )}
-                                {leave.fullDay?.fromDuration === "half" &&
-                                  ` (${leave.fullDay.fromSession})`}
-                              </p>
-                              <p>
-                                <strong>To:</strong>{" "}
-                                {leave.fullDay?.to
-                                  ? `${formatISTDate(leave.fullDay.to)}${
-                                      leave.fullDay.toDuration === "half"
-                                        ? ` (${leave.fullDay.toSession})`
-                                        : ""
-                                    }`
-                                  : "N/A"}
-                              </p>
-                              <p>
-                                <strong>Reason:</strong> {leave.reason || "N/A"}
-                              </p>
-                              <p>
-                                <strong>Charge Given To:</strong>{" "}
-                                {leave.chargeGivenTo?.name || "N/A"}
-                              </p>
-                              <p>
-                                <strong>Emergency Contact:</strong>{" "}
-                                {leave.emergencyContact || "N/A"}
-                              </p>
-                              {leave.compensatoryDate && (
-                                <p>
-                                  <strong>Compensatory Date:</strong>{" "}
-                                  {formatISTDate(leave.compensatoryDate)}
-                                </p>
-                              )}
-                              {leave.projectDetails && (
-                                <p>
-                                  <strong>Project Details:</strong> {leave.projectDetails}
-                                </p>
-                              )}
-                              {leave.restrictedHoliday && (
-                                <p>
-                                  <strong>Restricted Holiday:</strong>{" "}
-                                  {leave.restrictedHoliday}
-                                </p>
-                              )}
-                              {leave.medicalCertificate && (
-                                <p>
-                                  <strong>Medical Certificate:</strong>{" "}
-                                  <Button
-                                    size="sm"
-                                    onClick={() =>
-                                      handleViewFile(leave.medicalCertificate?._id)
-                                    }
-                                    className="bg-blue-600 text-white hover:bg-blue-700 rounded-md"
-                                    disabled={fileError}
-                                  >
-                                    View {leave.medicalCertificate.filename}
-                                  </Button>
-                                </p>
-                              )}
-                            </div>
-                            {user.loginType === "HOD" &&
-                              leave.status.hod === "Pending" && (
-                                <div className="mt-4 flex items-center gap-4">
-                                  <div className="flex items-center gap-2">
-                                    <Label
-                                      htmlFor={`adjustedDays-${leave._id}`}
-                                      className="text-sm font-medium"
-                                    >
-                                      Approved Days
-                                    </Label>
-                                    <Input
-                                      id={`adjustedDays-${leave._id}`}
-                                      type="number"
-                                      min="0"
-                                      max={getLeaveDuration(leave)}
-                                      value={
-                                        adjustedDays !== null
-                                          ? adjustedDays
-                                          : getLeaveDuration(leave)
-                                      }
-                                      onChange={(e) => {
-                                        const newDays = e.target.value ? parseFloat(e.target.value) : null;
-                                        setAdjustedDays(newDays);
-                                        if (newDays !== null && newDays < getLeaveDuration(leave)) {
-                                          const leaveDates = getLeaveDates(leave);
-                                          setRejectedDates(leaveDates.slice(newDays));
-                                        } else {
-                                          setRejectedDates([]);
-                                        }
-                                      }}
-                                      className="border-gray-300 focus:ring-blue-500 focus:border-blue-500 rounded-md w-24"
-                                    />
-                                  </div>
-                                  {adjustedDays !== null && adjustedDays < getLeaveDuration(leave) && (
-                                    <div className="flex-1">
-                                      <Label className="text-sm font-medium">
-                                        Approval Timeframe
-                                      </Label>
-                                      <Select
-                                        onValueChange={(value) => {
-                                          setRejectedDates([value]);
-                                        }}
-                                        value={rejectedDates[0] || ""}
-                                      >
-                                        <SelectTrigger className="border-gray-300 focus:ring-blue-500 focus:border-blue-500 rounded-md">
-                                          <SelectValue placeholder="Select date to reject" />
-                                        </SelectTrigger>
-                                        <SelectContent className="z-50">
-                                          {getLeaveDates(leave).map((date) => (
-                                            <SelectItem key={date} value={date}>
-                                              {formatISTDate(date)}
-                                            </SelectItem>
-                                          ))}
-                                        </SelectContent>
-                                      </Select>
-                                    </div>
-                                  )}
-                                  <div className="flex gap-2">
-                                    <Button
-                                      variant="default"
-                                      size="sm"
-                                      className="bg-green-600 hover:bg-green-700 text-white rounded-md"
-                                      onClick={() =>
-                                        handleApproval(
-                                          leave._id,
-                                          "Approved",
-                                          "hod",
-                                          "",
-                                          adjustedDays,
-                                          rejectedDates
-                                        )
-                                      }
-                                      disabled={loading || leave.status.hod !== "Pending"}
-                                    >
-                                      Approve
-                                      {adjustedDays !== null &&
-                                        ` (${adjustedDays} days)`}
-                                    </Button>
-                                    <Button
-                                      variant="destructive"
-                                      size="sm"
-                                      className="bg-red-600 hover:bg-red-700 text-white rounded-md"
-                                      onClick={() => handleRejection(leave._id, "hod")}
-                                      disabled={loading || leave.status.hod !== "Pending"}
-                                    >
-                                      Reject
-                                    </Button>
-                                  </div>
-                                </div>
-                              )}
-                            {["HOD", "Admin", "CEO"].includes(user?.loginType) &&
-                              viewMode !== "own" && (
-                                <div className="mt-4 flex gap-2">
-                                  {user.loginType === "CEO" &&
-                                    ["Approved", "Submitted"].includes(leave.status.hod) &&
-                                    leave.status.ceo === "Pending" && (
-                                      <div className="flex gap-2">
-                                        <Button
-                                          variant="default"
-                                          size="sm"
-                                          className="bg-green-600 hover:bg-green-700 text-white rounded-md"
-                                          onClick={() =>
-                                            handleApproval(leave._id, "Approved", "ceo")
-                                          }
-                                          disabled={loading || leave.status.ceo !== "Pending"}
-                                        >
-                                          Approve
-                                        </Button>
-                                        <Button
-                                          variant="destructive"
-                                          size="sm"
-                                          className="bg-red-600 hover:bg-red-700 text-white rounded-md"
-                                          onClick={() => handleRejection(leave._id, "ceo")}
-                                          disabled={loading || leave.status.ceo !== "Pending"}
-                                        >
-                                          Reject
-                                        </Button>
-                                      </div>
-                                    )}
-                                  {user.loginType === "Admin" &&
-                                    leave.status.ceo === "Approved" &&
-                                    leave.status.admin === "Pending" && (
-                                      <div className="flex gap-2">
-                                        <Button
-                                          variant="default"
-                                          size="sm"
-                                          className="bg-green-600 hover:bg-green-700 text-white rounded-md"
-                                          onClick={() =>
-                                            handleApproval(
-                                              leave._id,
-                                              "Acknowledged",
-                                              "admin"
-                                            )
-                                          }
-                                          disabled={
-                                            loading || leave.status.admin !== "Pending"
-                                          }
-                                        >
-                                          Acknowledge
-                                        </Button>
-                                      </div>
-                                    )}
-                                  {(leave.status.hod === "Approved" ||
-                                    leave.status.hod === "Rejected") &&
-                                    user.loginType === "HOD" && (
-                                      <span className="text-sm text-gray-500">
-                                        Action Completed
-                                      </span>
-                                    )}
-                                  {(leave.status.ceo === "Approved" ||
-                                    leave.status.ceo === "Rejected") &&
-                                    user.loginType === "CEO" && (
-                                      <span className="text-sm text-gray-500">
-                                        Action Completed
-                                      </span>
-                                    )}
-                                  {(leave.status.admin === "Acknowledged" ||
-                                    leave.status.admin === "Rejected") &&
-                                    user.loginType === "Admin" && (
-                                      <span className="text-sm text-gray-500">
-                                        Action Completed
-                                      </span>
-                                    )}
-                                </div>
-                              )}
-                          </div>
-                        ))
-                      ) : (
-                        <div className="border p-4 rounded-lg bg-gray-50">
-                          <h3 className="font-semibold text-lg mb-2">
-                            {selectedLeave.leaveType === "Leave Without Pay(LWP)"
-                              ? "LWP"
-                              : selectedLeave.leaveType === "Casual"
-                              ? "CL"
-                              : selectedLeave.leaveType === "Medical"
-                              ? "ML"
-                              : selectedLeave.leaveType === "Restricted Holidays"
-                              ? "RH"
-                              : selectedLeave.leaveType}
-                          </h3>
-                          <div className="grid grid-cols-2 gap-4 text-sm text-gray-700">
-                            <p>
-                              <strong>Leave Duration:</strong>{" "}
-                              {formatDurationDisplay(getLeaveDuration(selectedLeave))}
-                            </p>
-                            <p>
-                              <strong>From:</strong>{" "}
-                              {formatISTDate(
-                                selectedLeave.fullDay?.from ||
-                                  selectedLeave.halfDay?.date ||
-                                  selectedLeave.createdAt
-                              )}
-                              {selectedLeave.fullDay?.fromDuration === "half" &&
-                                ` (${selectedLeave.fullDay.fromSession})`}
-                            </p>
-                            <p>
-                              <strong>To:</strong>{" "}
-                              {selectedLeave.fullDay?.to
-                                ? `${formatISTDate(selectedLeave.fullDay.to)}${
-                                    selectedLeave.fullDay.toDuration === "half"
-                                      ? ` (${selectedLeave.fullDay.toSession})`
-                                      : ""
-                                  }`
-                                : "N/A"}
-                            </p>
-                            <p>
-                              <strong>Reason:</strong> {selectedLeave.reason || "N/A"}
-                            </p>
-                            <p>
-                              <strong>Charge Given To:</strong>{" "}
-                              {selectedLeave.chargeGivenTo?.name || "N/A"}
-                            </p>
-                            <p>
-                              <strong>Emergency Contact:</strong>{" "}
-                              {selectedLeave.emergencyContact || "N/A"}
-                            </p>
-                            {selectedLeave.compensatoryDate && (
-                              <p>
-                                <strong>Compensatory Date:</strong>{" "}
-                                {formatISTDate(selectedLeave.compensatoryDate)}
-                              </p>
-                            )}
-                            {selectedLeave.projectDetails && (
-                              <p>
-                                <strong>Project Details:</strong>{" "}
-                                {selectedLeave.projectDetails}
-                              </p>
-                            )}
-                            {selectedLeave.restrictedHoliday && (
-                              <p>
-                                <strong>Restricted Holiday:</strong>{" "}
-                                {selectedLeave.restrictedHoliday}
-                              </p>
-                            )}
-                            {selectedLeave.medicalCertificate && (
-                              <p>
-                                <strong>Medical Certificate:</strong>{" "}
-                                <Button
-                                  size="sm"
-                                  onClick={handleViewFile}
-                                  className="bg-blue-600 text-white hover:bg-blue-700 rounded-md"
-                                  disabled={fileError}
-                                >
-                                  View {selectedLeave.medicalCertificate.filename}
-                                </Button>
-                              </p>
-                            )}
-                          </div>
-                          {user.loginType === "HOD" &&
-                            selectedLeave.status.hod === "Pending" && (
-                              <div className="mt-4 flex items-center gap-4">
-                                <div className="flex items-center gap-2">
-                                  <Label
-                                    htmlFor="adjustedDays"
-                                    className="text-sm font-medium"
-                                  >
-                                    Approved Days
-                                  </Label>
-                                  <Input
-                                    id="adjustedDays"
-                                    type="number"
-                                    min="0"
-                                    max={getLeaveDuration(selectedLeave)}
-                                    value={
-                                      adjustedDays !== null
-                                        ? adjustedDays
-                                        : getLeaveDuration(selectedLeave)
-                                    }
-                                    onChange={(e) => {
-                                      const newDays = e.target.value ? parseFloat(e.target.value) : null;
-                                      setAdjustedDays(newDays);
-                                      if (newDays !== null && newDays < getLeaveDuration(selectedLeave)) {
-                                        const leaveDates = getLeaveDates(selectedLeave);
-                                        setRejectedDates(leaveDates.slice(newDays));
-                                      } else {
-                                        setRejectedDates([]);
-                                      }
-                                    }}
-                                    className="border-gray-300 focus:ring-blue-500 focus:border-blue-500 rounded-md w-24"
-                                  />
-                                </div>
-                                {adjustedDays !== null && adjustedDays < getLeaveDuration(selectedLeave) && (
-                                  <div className="flex-1">
-                                    <Label className="text-sm font-medium">
-                                      Select Rejected Dates
-                                    </Label>
-                                    <Select
-                                      onValueChange={(value) => {
-                                        setRejectedDates([value]);
-                                      }}
-                                      value={rejectedDates[0] || ""}
-                                    >
-                                      <SelectTrigger className="border-gray-300 focus:ring-blue-500 focus:border-blue-500 rounded-md">
-                                        <SelectValue placeholder="Select date to reject" />
-                                      </SelectTrigger>
-                                      <SelectContent className="z-50">
-                                        {getLeaveDates(selectedLeave).map((date) => (
-                                          <SelectItem key={date} value={date}>
-                                            {formatISTDate(date)}
-                                          </SelectItem>
-                                        ))}
-                                      </SelectContent>
-                                    </Select>
-                                  </div>
-                                )}
-                                <div className="flex gap-2">
-                                  <Button
-                                    variant="default"
-                                    size="sm"
-                                    className="bg-green-600 hover:bg-green-700 text-white rounded-md"
-                                    onClick={() =>
-                                      handleApproval(
-                                        selectedLeave._id,
-                                        "Approved",
-                                        "hod",
-                                        "",
-                                        adjustedDays,
-                                        rejectedDates
-                                      )
-                                    }
-                                    disabled={
-                                      loading || selectedLeave.status.hod !== "Pending"
-                                    }
-                                  >
-                                    Approve
-                                    {adjustedDays !== null &&
-                                      ` (${adjustedDays} days)`}
-                                  </Button>
-                                  <Button
-                                    variant="destructive"
-                                    size="sm"
-                                    className="bg-red-600 hover:bg-red-700 text-white rounded-md"
-                                    onClick={() =>
-                                      handleRejection(selectedLeave._id, "hod")
-                                    }
-                                    disabled={
-                                      loading || selectedLeave.status.hod !== "Pending"
-                                    }
-                                  >
-                                    Reject
-                                  </Button>
-                                </div>
+                                {formatISTDate(date)}
                               </div>
-                            )}
-                          {["HOD", "Admin", "CEO"].includes(user?.loginType) &&
-                            viewMode !== "own" && (
-                              <div className="mt-4 flex gap-2">
-                                {user.loginType === "CEO" &&
-                                  ["Approved", "Submitted"].includes(
-                                    selectedLeave.status.hod
-                                  ) &&
-                                  selectedLeave.status.ceo === "Pending" && (
-                                    <div className="flex gap-2">
-                                      <Button
-                                        variant="default"
-                                        size="sm"
-                                        className="bg-green-600 hover:bg-green-700 text-white rounded-md"
-                                        onClick={() =>
-                                          handleApproval(
-                                            selectedLeave._id,
-                                            "Approved",
-                                            "ceo"
-                                          )
-                                        }
-                                        disabled={
-                                          loading || selectedLeave.status.ceo !== "Pending"
-                                        }
-                                      >
-                                        Approve
-                                      </Button>
-                                      <Button
-                                        variant="destructive"
-                                        size="sm"
-                                        className="bg-red-600 hover:bg-red-700 text-white rounded-md"
-                                        onClick={() =>
-                                          handleRejection(selectedLeave._id, "ceo")
-                                        }
-                                        disabled={
-                                          loading || selectedLeave.status.ceo !== "Pending"
-                                        }
-                                      >
-                                        Reject
-                                      </Button>
-                                    </div>
-                                  )}
-                                {user.loginType === "Admin" &&
-                                  selectedLeave.status.ceo === "Approved" &&
-                                  selectedLeave.status.admin === "Pending" && (
-                                    <div className="flex gap-2">
-                                      <Button
-                                        variant="default"
-                                        size="sm"
-                                        className="bg-green-600 hover:bg-green-700 text-white rounded-md"
-                                        onClick={() =>
-                                          handleApproval(
-                                            selectedLeave._id,
-                                            "Acknowledged",
-                                            "admin"
-                                          )
-                                        }
-                                        disabled={
-                                          loading || selectedLeave.status.admin !== "Pending"
-                                        }
-                                      >
-                                        Acknowledge
-                                      </Button>
-                                    </div>
-                                  )}
-                                {(selectedLeave.status.hod === "Approved" ||
-                                  selectedLeave.status.hod === "Rejected") &&
-                                  user.loginType === "HOD" && (
-                                    <span className="text-sm text-gray-500">
-                                      Action Completed
-                                    </span>
-                                  )}
-                                {(selectedLeave.status.ceo === "Approved" ||
-                                  selectedLeave.status.ceo === "Rejected") &&
-                                  user.loginType === "CEO" && (
-                                    <span className="text-sm text-gray-500">
-                                      Action Completed
-                                    </span>
-                                  )}
-                                {(selectedLeave.status.admin === "Acknowledged" ||
-                                  selectedLeave.status.admin === "Rejected") &&
-                                  user.loginType === "Admin" && (
-                                    <span className="text-sm text-gray-500">
-                                      Action Completed
-                                    </span>
-                                  )}
-                              </div>
-                            )}
-                        </div>
-                      )}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </div>
                   )}
-                  <DialogFooter className="mt-4">
+                <div className="flex gap-2 items-center">
+                  <Button
+                    variant="default"
+                    size="sm"
+                    className="bg-green-600 hover:bg-green-700 text-white rounded-md"
+                    onClick={() =>
+                      triggerConfirmation(
+                        leave._id,
+                        "Approved",
+                        "hod",
+                        "",
+                        leaveAdjustments[leave._id]?.adjustedDays !== undefined
+                          ? leaveAdjustments[leave._id].adjustedDays
+                          : getLeaveDuration(leave),
+                        leaveAdjustments[leave._id]?.approvedDates || []
+                      )
+                    }
+                    disabled={
+                      loading ||
+                      leave.status.hod !== "Pending" ||
+                      leaveAdjustments[leave._id]?.adjustedDays === 0
+                    }
+                  >
+                    Approve
+                    {leaveAdjustments[leave._id]?.adjustedDays !== undefined &&
+                      ` (${leaveAdjustments[leave._id].adjustedDays} days)`}
+                  </Button>
+                  <div className="flex items-center gap-2">
                     <Button
-                      onClick={() => {
-                        setSelectedLeave(null);
-                        setAdjustedDays(null);
-                        setRejectedDates([]);
-                      }}
-                      className="bg-gray-300 hover:bg-gray-400 text-gray-800 rounded-md"
+                      variant="destructive"
+                      size="sm"
+                      className="bg-red-600 hover:bg-red-700 text-white rounded-md"
+                      onClick={() => handleRejection(leave._id, "hod")}
+                      disabled={loading || leave.status.hod !== "Pending"}
                     >
-                      Close
+                      Reject
                     </Button>
-                  </DialogFooter>
-                </DialogContent>
+                  </div>
+                </div>
+              </div>
+            )}
+            {["HOD", "Admin", "CEO"].includes(user?.loginType) &&
+              viewMode !== "own" && (
+                <div className="mt-4 flex gap-2">
+                  {user.loginType === "CEO" &&
+                    ["Approved", "Submitted"].includes(leave.status.hod) &&
+                    leave.status.ceo === "Pending" && (
+                      <>
+                        <Button
+                          variant="default"
+                          size="sm"
+                          className="bg-green-600 hover:bg-green-700 text-white rounded-md"
+                          onClick={() =>
+                            triggerConfirmation(leave._id, "Approved", "ceo")
+                          }
+                          disabled={loading || leave.status.ceo !== "Pending"}
+                        >
+                          Approve
+                        </Button>
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          className="bg-red-600 hover:bg-red-700 text-white rounded-md"
+                          onClick={() => handleRejection(leave._id, "ceo")}
+                          disabled={loading || leave.status.ceo !== "Pending"}
+                        >
+                          Reject
+                        </Button>
+                      </>
+                    )}
+                  {user.loginType === "Admin" &&
+                    leave.status.ceo === "Approved" &&
+                    leave.status.admin === "Pending" && (
+                      <Button
+                        variant="default"
+                        size="sm"
+                        className="bg-green-600 hover:bg-green-700 text-white rounded-md"
+                        onClick={() =>
+                          handleApproval(
+                            leave._id,
+                            "Acknowledged",
+                            "admin"
+                          )
+                        }
+                        disabled={loading || leave.status.admin !== "Pending"}
+                      >
+                        Acknowledge
+                      </Button>
+                    )}
+                  {(leave.status.hod !== "Pending" &&
+                    leave.status.hod !== "Submitted") &&
+                    user.loginType === "HOD" && (
+                      <span className="text-sm text-gray-500">
+                        Action Completed
+                      </span>
+                    )}
+                  {(leave.status.ceo !== "Pending" &&
+                    leave.status.ceo !== "Submitted") &&
+                    user.loginType === "CEO" && (
+                      <span className="text-sm text-gray-500">
+                        Action Completed
+                      </span>
+                    )}
+                  {(leave.status.admin !== "Pending" &&
+                    leave.status.admin !== "Submitted") &&
+                    user.loginType === "Admin" && (
+                      <span className="text-sm text-gray-500">
+                        Action Completed
+                      </span>
+                    )}
+                </div>
+              )}
+          </div>
+        ))
+      ) : (
+        <div className="border p-4 rounded-lg bg-gray-50">
+          <h3 className="font-semibold text-lg mb-2">
+            {getLeaveTypeBadge(selectedLeave.leaveType)}
+          </h3>
+          <div className="grid grid-cols-2 gap-4 text-sm text-gray-700">
+            <p>
+              <strong>Leave Duration:</strong>{" "}
+              {formatDurationDisplay(getLeaveDuration(selectedLeave))}
+            </p>
+            <p>
+              <strong>From:</strong>{" "}
+              {formatISTDate(
+                selectedLeave.fullDay?.from ||
+                  selectedLeave.halfDay?.date ||
+                  selectedLeave.createdAt
+              )}
+              {selectedLeave.fullDay?.fromDuration === "half" &&
+                ` (${selectedLeave.fullDay.fromSession})`}
+            </p>
+            <p>
+              <strong>To:</strong>{" "}
+              {selectedLeave.fullDay?.to
+                ? `${formatISTDate(selectedLeave.fullDay.to)}${
+                    selectedLeave.fullDay.toDuration === "half"
+                      ? ` (${selectedLeave.fullDay.toSession})`
+                      : ""
+                  }`
+                : "N/A"}
+            </p>
+            <p>
+              <strong>Reason:</strong> {selectedLeave.reason || "N/A"}
+            </p>
+            <p>
+              <strong>Charge Given To:</strong>{" "}
+              {selectedLeave.chargeGivenTo?.name || "N/A"}
+            </p>
+            <p>
+              <strong>Emergency Contact:</strong>{" "}
+              {selectedLeave.emergencyContact || "N/A"}
+            </p>
+            {selectedLeave.compensatoryDate && (
+              <p>
+                <strong>Compensatory Date:</strong>{" "}
+                {formatISTDate(selectedLeave.compensatoryDate)}
+              </p>
+            )}
+            {selectedLeave.projectDetails && (
+              <p>
+                <strong>Project Details:</strong>{" "}
+                {selectedLeave.projectDetails}
+              </p>
+            )}
+            {selectedLeave.restrictedHoliday && (
+              <p>
+                <strong>Restricted Holiday:</strong>{" "}
+                {selectedLeave.restrictedHoliday}
+              </p>
+            )}
+            {selectedLeave.medicalCertificate && (
+              <p>
+                <strong>Medical Certificate:</strong>{" "}
+                <Button
+                  size="sm"
+                  onClick={handleViewFile}
+                  className="bg-blue-600 text-white hover:bg-blue-700 rounded-md"
+                  disabled={fileError}
+                >
+                  View {selectedLeave.medicalCertificate.filename}
+                </Button>
+              </p>
+            )}
+            {selectedLeave.approvedDates?.length > 0 && (
+              <p>
+                <strong>Approved Dates:</strong>{" "}
+                {selectedLeave.approvedDates.map(ad => `${formatISTDate(ad.date)}${ad.duration ? ` (${ad.duration})` : ''}`).join(', ')}
+              </p>
+            )}
+            {selectedLeave.rejectedDates?.length > 0 && (
+              <p>
+                <strong>Rejected Dates:</strong>{" "}
+                {selectedLeave.rejectedDates.map(rd => `${formatISTDate(rd.date)}${rd.duration ? ` (${rd.duration})` : ''}`).join(', ')}
+              </p>
+            )}
+          </div>
+          {user.loginType === "HOD" &&
+            selectedLeave.status.hod === "Pending" && (
+              <div className="mt-4 flex items-center gap-4">
+                <div className="flex items-center gap-2">
+                  <Label
+                    htmlFor={`adjustedDays-${selectedLeave._id}`}
+                    className="text-sm font-medium"
+                  >
+                    Approved Days
+                  </Label>
+                  <Input
+                    id={`adjustedDays-${selectedLeave._id}`}
+                    type="number"
+                    min="0"
+                    max={getLeaveDuration(selectedLeave)}
+                    value={
+                      leaveAdjustments[selectedLeave._id]?.adjustedDays !== undefined
+                        ? leaveAdjustments[selectedLeave._id].adjustedDays
+                        : getLeaveDuration(selectedLeave)
+                    }
+                    onChange={(e) => {
+                      const newDays = e.target.value ? parseFloat(e.target.value) : null;
+                      handleAdjustmentChange(
+                        selectedLeave._id,
+                        "adjustedDays",
+                        newDays,
+                        getLeaveDuration(selectedLeave)
+                      );
+                    }}
+                    className="border-gray-300 focus:ring-blue-500 focus:border-blue-500 rounded-md w-24"
+                  />
+                </div>
+                {leaveAdjustments[selectedLeave._id]?.adjustedDays !== undefined &&
+                  leaveAdjustments[selectedLeave._id]?.adjustedDays < getLeaveDuration(selectedLeave) && (
+                    <div className="flex-1">
+                      <Label className="text-sm font-medium">
+                        Approval Time Frame
+                      </Label>
+                      <Select
+                        onValueChange={(value) => {
+                          handleAdjustmentChange(
+                            selectedLeave._id,
+                            "approvedDates",
+                            leaveAdjustments[selectedLeave._id]?.approvedDates?.includes(value)
+                              ? leaveAdjustments[selectedLeave._id].approvedDates.filter((date) => date !== value)
+                              : [...(leaveAdjustments[selectedLeave._id]?.approvedDates || []), value],
+                            getLeaveDuration(selectedLeave)
+                          );
+                        }}
+                        value=""
+                      >
+                        <SelectTrigger className="border-gray-300 focus:ring-blue-500 focus:border-blue-500 rounded-md">
+                          <SelectValue
+                            placeholder={
+                              leaveAdjustments[selectedLeave._id]?.approvedDates?.length > 1
+                                ? "Multiple Days"
+                                : "Select dates to approve"
+                            }
+                          />
+                        </SelectTrigger>
+                        <SelectContent className="z-50">
+                          {getLeaveDates(selectedLeave).map((date) => (
+                            <SelectItem key={date} value={date}>
+                              <div className="flex items-center">
+                                {leaveAdjustments[selectedLeave._id]?.approvedDates?.includes(date) && (
+                                  <span className="mr-2 text-green-500">✔</span>
+                                )}
+                                {formatISTDate(date)}
+                              </div>
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                <div className="flex gap-2 items-center">
+                  <Button
+                    variant="default"
+                    size="sm"
+                    className="bg-green-600 hover:bg-green-700 text-white rounded-md"
+                    onClick={() =>
+                      triggerConfirmation(
+                        selectedLeave._id,
+                        "Approved",
+                        "hod",
+                        "",
+                        leaveAdjustments[selectedLeave._id]?.adjustedDays !== undefined
+                          ? leaveAdjustments[selectedLeave._id].adjustedDays
+                          : getLeaveDuration(selectedLeave),
+                        leaveAdjustments[selectedLeave._id]?.approvedDates || []
+                      )
+                    }
+                    disabled={
+                      loading ||
+                      selectedLeave.status.hod !== "Pending" ||
+                      leaveAdjustments[selectedLeave._id]?.adjustedDays === 0
+                    }
+                  >
+                    Approve
+                    {leaveAdjustments[selectedLeave._id]?.adjustedDays !== undefined &&
+                      ` (${leaveAdjustments[selectedLeave._id].adjustedDays} days)`}
+                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      className="bg-red-600 hover:bg-red-700 text-white rounded-md"
+                      onClick={() =>
+                        handleRejection(selectedLeave._id, "hod")
+                      }
+                      disabled={
+                        loading || selectedLeave.status.hod !== "Pending"
+                      }
+                    >
+                      Reject
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
+          {["HOD", "Admin", "CEO"].includes(user?.loginType) &&
+            viewMode !== "own" && (
+              <div className="mt-4 flex gap-2">
+                {user.loginType === "CEO" &&
+                  ["Approved", "Submitted"].includes(
+                    selectedLeave.status.hod
+                  ) &&
+                  selectedLeave.status.ceo === "Pending" && (
+                    <>
+                      <Button
+                        variant="default"
+                        size="sm"
+                        className="bg-green-600 hover:bg-green-700 text-white rounded-md"
+                        onClick={() =>
+                          triggerConfirmation(
+                            selectedLeave._id,
+                            "Approved",
+                            "ceo"
+                          )
+                        }
+                        disabled={
+                          loading || selectedLeave.status.ceo !== "Pending"
+                        }
+                      >
+                        Approve
+                      </Button>
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        className="bg-red-600 hover:bg-red-700 text-white rounded-md"
+                        onClick={() =>
+                          handleRejection(selectedLeave._id, "ceo")
+                        }
+                        disabled={
+                          loading || selectedLeave.status.ceo !== "Pending"
+                        }
+                      >
+                        Reject
+                      </Button>
+                    </>
+                  )}
+                {user.loginType === "Admin" &&
+                  selectedLeave.status.ceo === "Approved" &&
+                  selectedLeave.status.admin === "Pending" && (
+                    <Button
+                      variant="default"
+                      size="sm"
+                      className="bg-green-600 hover:bg-green-700 text-white rounded-md"
+                      onClick={() =>
+                        handleApproval(
+                          selectedLeave._id,
+                          "Acknowledged",
+                          "admin"
+                        )
+                      }
+                      disabled={
+                        loading || selectedLeave.status.admin !== "Pending"
+                      }
+                    >
+                      Acknowledge
+                    </Button>
+                  )}
+                {(selectedLeave.status.hod !== "Pending" &&
+                  selectedLeave.status.hod !== "Submitted") &&
+                  user.loginType === "HOD" && (
+                    <span className="text-sm text-gray-500">
+                      Action Completed
+                    </span>
+                  )}
+                {(selectedLeave.status.ceo !== "Pending" &&
+                  selectedLeave.status.ceo !== "Submitted") &&
+                  user.loginType === "CEO" && (
+                    <span className="text-sm text-gray-500">
+                      Action Completed
+                    </span>
+                  )}
+                {(selectedLeave.status.admin !== "Pending" &&
+                  selectedLeave.status.admin !== "Submitted") &&
+                  user.loginType === "Admin" && (
+                    <span className="text-sm text-gray-500">
+                      Action Completed
+                    </span>
+                  )}
+              </div>
+            )}
+        </div>
+      )}
+    </div>
+  )}
+  <DialogFooter className="mt-4">
+    <Button
+      onClick={() => {
+        setSelectedLeave(null);
+        setLeaveAdjustments({});
+      }}
+      className="bg-gray-300 hover:bg-gray-400 text-gray-800 rounded-md"
+    >
+      Close
+    </Button>
+  </DialogFooter>
+</DialogContent>
               </Dialog>
               <Dialog
                 open={showRejectionDialog}
@@ -1947,6 +2038,64 @@ function LeaveList() {
                   </DialogFooter>
                 </DialogContent>
               </Dialog>
+<Dialog
+  open={showConfirmationDialog}
+  onOpenChange={setShowConfirmationDialog}
+>
+  <DialogContent className="max-w-lg">
+    <DialogHeader>
+      <DialogTitle>Confirm Action</DialogTitle>
+      <DialogDescription>
+        {confirmationData && confirmationData.days !== null && confirmationData.days < (confirmationData.totalDays || 0)
+          ? `Are you sure you want to approve ${confirmationData.days} day${confirmationData.days === 1 ? '' : 's'} (${confirmationData.approvedDates?.map(date => formatISTDate(date)).join(', ') || ''}) and reject ${confirmationData.totalDays - confirmationData.days} day${(confirmationData.totalDays - confirmationData.days) === 1 ? '' : 's'} (${confirmationData.rejectedDates?.map(date => formatISTDate(date)).join(', ') || ''})? Please provide remarks for rejected days.`
+          : confirmationData ? `Are you sure you want to ${confirmationData.status?.toLowerCase() || 'process'} this leave?` : 'Please wait, loading confirmation details...'}
+      </DialogDescription>
+    </DialogHeader>
+    <div className="space-y-3">
+      {confirmationData && (confirmationData.days !== null && confirmationData.days < (confirmationData.totalDays || 0) || status === "Rejected") && (
+        <div>
+          <Label htmlFor="confirmationRemarks" className="text-sm font-medium">
+            Remarks {(confirmationData.days !== null && confirmationData.days < (confirmationData.totalDays || 0)) ? "for Rejected Days" : "for Rejection"}
+          </Label>
+          <Input
+            id="confirmationRemarks"
+            value={rejectionRemarks}
+            onChange={(e) => setRejectionRemarks(e.target.value)}
+            placeholder={`Enter reason for ${(confirmationData.days !== null && confirmationData.days < (confirmationData.totalDays || 0)) ? 'rejecting partial days' : 'rejection'}`}
+            className="border-gray-300 focus:ring-blue-500 focus:border-blue-500 rounded-md"
+          />
+        </div>
+      )}
+    </div>
+    <DialogFooter className="mt-4">
+      <Button
+        onClick={() => setShowConfirmationDialog(false)}
+        className="bg-gray-300 hover:bg-gray-400 text-gray-800 rounded-md"
+      >
+        Cancel
+      </Button>
+      <Button
+        className="ml-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md"
+        onClick={() => {
+          if (confirmationData && ((confirmationData.days !== null && confirmationData.days < (confirmationData.totalDays || 0)) || status === "Rejected") && !rejectionRemarks.trim()) {
+            setError("Remarks are required for rejection.");
+            return;
+          }
+          handleApproval(
+            confirmationData?.id || '',
+            confirmationData?.status || 'Approved',
+            confirmationData?.currentStage || 'hod',
+            rejectionRemarks,
+            confirmationData?.days !== null ? confirmationData.days : getLeaveDuration(leaves.find(l => l._id === (confirmationData?.id || '')) || {}),
+            confirmationData?.approvedDates || []
+          );
+        }}
+      >
+        Confirm
+      </Button>
+    </DialogFooter>
+  </DialogContent>
+</Dialog>
             </div>
           </CardContent>
         </Card>

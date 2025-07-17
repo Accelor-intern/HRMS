@@ -33,6 +33,7 @@ import {
 } from "../components/ui/select";
 import { Label } from "../components/ui/label";
 import { Input } from "../components/ui/input";
+import { Textarea } from "../components/ui/textarea";
 import Pagination from "./Pagination";
 import api from "../services/api";
 import ContentLayout from "./ContentLayout";
@@ -43,6 +44,7 @@ function ODList() {
   const initialFilters = useMemo(
     () => ({
       employeeId: user?.loginType === "Employee" ? user?.employeeId || "" : "",
+      name: "",
       departmentId:
         user?.loginType === "HOD" && user?.department
           ? user.department._id
@@ -55,6 +57,7 @@ function ODList() {
   );
   const [odRecords, setOdRecords] = useState([]);
   const [departments, setDepartments] = useState([]);
+  const [employees, setEmployees] = useState([]);
   const [filters, setFilters] = useState(initialFilters);
   const [tempFilters, setTempFilters] = useState(initialFilters);
   const [error, setError] = useState(null);
@@ -65,6 +68,9 @@ function ODList() {
   const [itemsPerPage, setItemsPerPage] = useState(10);
   const [total, setTotal] = useState(0);
   const [viewMode, setViewMode] = useState("approval");
+  const [showApprovalModal, setShowApprovalModal] = useState(null);
+  const [approvalReason, setApprovalReason] = useState("");
+  const [unlockStatus, setUnlockStatus] = useState({});
 
   const fetchODs = useCallback(
     async (filterParams) => {
@@ -148,6 +154,16 @@ function ODList() {
     }
   }, []);
 
+  const fetchEmployees = useCallback(async () => {
+    try {
+      const res = await api.get("/employees");
+      setEmployees(res.data);
+    } catch (err) {
+      console.error("Error fetching employees:", err);
+      setError("Failed to load employees");
+    }
+  }, []);
+
   useEffect(() => {
     if (!user) return;
     if (user?.loginType === "HOD" && user?.department) {
@@ -160,6 +176,7 @@ function ODList() {
       setFilters(hodFilters);
       setTempFilters(hodFilters);
       fetchODs(hodFilters);
+      fetchEmployees();
     } else if (user?.loginType === "Employee") {
       const empFilters = {
         ...initialFilters,
@@ -170,11 +187,12 @@ function ODList() {
       fetchODs(empFilters);
     } else if (user) {
       fetchDepartments();
+      fetchEmployees();
       setFilters(initialFilters);
       setTempFilters(initialFilters);
       fetchODs(initialFilters);
     }
-  }, [user, fetchDepartments, fetchODs, initialFilters, viewMode]);
+  }, [user, fetchDepartments, fetchEmployees, fetchODs, initialFilters, viewMode]);
 
   useEffect(() => {
     fetchODs(filters);
@@ -185,66 +203,65 @@ function ODList() {
   };
 
   const handleFilter = () => {
-    if (tempFilters.employeeId && !/^[A-Za-z0-9]+$/.test(tempFilters.employeeId)) {
-      setError("Invalid Employee ID format.");
-      return;
-    }
     setFilters(tempFilters);
     setCurrentPage(1);
     fetchODs(tempFilters);
   };
 
-  const handleApproval = async (id, status, currentStage) => {
-    try {
-      const odData = { status };
-      const odToUpdate = odRecords.find((od) => od._id === id);
-      const isWithin30Days =
-        new Date(odToUpdate.dateOut) >=
-        new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-      if (!isWithin30Days && status !== "Pending") {
-        alert("Cannot change status after 30 days.");
-        return;
-      }
+ const handleApproval = async (id, status, currentStage, reason = "") => {
+  try {
+    const odToUpdate = odRecords.find((record) => record._id === id);
+    const isWithin30Days =
+      new Date(odToUpdate.dateOut) >=
+      new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    if (!isWithin30Days && odToUpdate.status[currentStage] !== "Pending") {
+      alert("Cannot change status after 30 days.");
+      return;
+    }
 
-      await api.put(`/od/${id}/approve`, odData);
-      const updatedODs = odRecords.map((od) => {
-        if (od._id === id) {
-          const newStatus = { ...od.status, [currentStage]: status };
-          if (status === "Approved" || status === "Acknowledged") {
-            if (currentStage === "hod") {
-              newStatus.ceo = "Pending";
-            } else if (currentStage === "ceo") {
-              newStatus.admin = "Pending";
-            }
-          } else if (status === "Rejected") {
-            newStatus.hod = currentStage === "hod" ? "Rejected" : "N/A";
-            newStatus.ceo = currentStage === "ceo" ? "Rejected" : "N/A";
-            newStatus.admin = currentStage === "admin" ? "Rejected" : "N/A";
-          } else if (status === "Pending") {
-            newStatus.hod = "Pending";
+    const odData = { 
+      status, 
+      reason: status === "Rejected" || unlockStatus[id] ? (reason.trim() || "No reason provided") : reason 
+    };
+    await api.put(`/od/${id}/approve`, odData);
+
+    const updatedODs = odRecords.map((record) => {
+      if (record._id === id) {
+        let newStatus = { ...record.status };
+        if (status === "Rejected") {
+          newStatus.hod = currentStage === "hod" ? "Rejected" : newStatus.hod;
+          newStatus.ceo = currentStage === "hod" || currentStage === "ceo" ? "N/A" : newStatus.ceo;
+          newStatus.admin = currentStage === "hod" || currentStage === "ceo" || currentStage === "admin" ? "N/A" : newStatus.admin;
+        } else {
+          newStatus[currentStage] = status;
+          if (status === "Approved" && currentStage === "hod") {
             newStatus.ceo = "Pending";
             newStatus.admin = "Pending";
+          } else if (["Approved", "Submitted"].includes(status) && currentStage === "ceo") {
+            newStatus.admin = "Pending";
           }
-          return { ...od, status: newStatus };
         }
-        return od;
-      });
-      setOdRecords(updatedODs);
-      alert(`OD ${status.toLowerCase()} successfully.`);
+        return { ...record, status: newStatus };
+      }
+      return record;
+    });
+    setOdRecords(updatedODs);
+    setUnlockStatus((prev) => ({ ...prev, [id]: false }));
+    alert(`OD ${status.toLowerCase()} successfully.`);
 
-      await api.post("/notifications", {
-        userId: odToUpdate.employeeId,
-        adminId: "admin-user-id",
-        message: `OD status for ${odToUpdate.name} has been updated to ${status} by ${user.loginType}.`,
-      });
-    } catch (err) {
-      console.error("Approval error:", err);
-      alert(
-        `Error processing OD approval: ${
-          err.response?.data?.message || err.message
-        }`
-      );
-    }
+    await api.post("/notifications", {
+      userId: odToUpdate.employeeId,
+      adminId: "admin-user-id",
+      message: `OD status for ${odToUpdate.name} has been updated to ${status} by ${user.loginType}. Reason: ${reason || "No reason provided"}`,
+    });
+  } catch (err) {
+    console.error("Approval error:", err);
+   // alert(`Failed to update OD status: ${err.response?.data?.message || err.message}`);
+  }
+};
+
+  const handleUnlock = (id) => {
+    setUnlockStatus((prev) => ({ ...prev, [id]: true }));
   };
 
   const hodDepartmentName =
@@ -303,21 +320,77 @@ function ODList() {
             transition={{ duration: 0.5 }}
             className="mb-6 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4"
           >
-            <div className="flex-1 min-w-[200px]">
-              <Label htmlFor="employeeId">Employee ID</Label>
-              <Input
-                id="employeeId"
-                name="employeeId"
-                value={tempFilters.employeeId}
-                onChange={(e) => handleChange("employeeId", e.target.value)}
-                placeholder="Employee ID"
-                disabled={
-                  user?.loginType === "Employee" ||
-                  (user?.loginType === "HOD" && viewMode === "own")
-                }
-                className="mt-1 border-gray-300 focus:ring-blue-500 focus:border-blue-500"
-              />
-            </div>
+            {user?.loginType === "HOD" ? (
+              <div className="flex-1 min-w-[200px] relative">
+                <Label htmlFor="employeeName" className="text-sm font-medium">
+                  Employee Name or ID
+                </Label>
+                <Select
+                  onValueChange={(value) => {
+                    const selectedEmployee = employees.find(
+                      (emp) => emp.employeeId === value
+                    );
+                    handleChange("name", selectedEmployee?.name || "");
+                    handleChange("employeeId", value);
+                  }}
+                  value={tempFilters.employeeId}
+                  disabled={viewMode === "own"}
+                >
+                  <SelectTrigger className="border px-3 py-2 rounded-md w-full">
+                    <SelectValue placeholder="Select Employee Name" />
+                  </SelectTrigger>
+                  <SelectContent className="z-50 max-h-60 overflow-y-auto">
+                    <SelectItem value="all">All Employees</SelectItem>
+                    {employees.map((emp) => (
+                      <SelectItem key={emp._id} value={emp.employeeId}>
+                        {emp.name} ({emp.employeeId})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : user?.loginType === "Employee" ? (
+              <div className="flex-1 min-w-[200px]">
+                <Label htmlFor="employeeId">Employee ID</Label>
+                <Input
+                  id="employeeId"
+                  name="employeeId"
+                  value={tempFilters.employeeId}
+                  onChange={(e) => handleChange("employeeId", e.target.value)}
+                  placeholder="Employee ID"
+                  disabled
+                  className="mt-1 border-gray-300 bg-gray-100 cursor-not-allowed"
+                />
+              </div>
+            ) : (
+              <div className="flex-1 min-w-[200px] relative">
+                <Label htmlFor="employeeName" className="text-sm font-medium">
+                  Employee Name or ID
+                </Label>
+                <Select
+                  onValueChange={(value) => {
+                    const selectedEmployee = employees.find(
+                      (emp) => emp.employeeId === value
+                    );
+                    handleChange("name", selectedEmployee?.name || "");
+                    handleChange("employeeId", value);
+                  }}
+                  value={tempFilters.employeeId}
+                >
+                  <SelectTrigger className="border px-3 py-2 rounded-md w-full">
+                    <SelectValue placeholder="Select Employee Name" />
+                  </SelectTrigger>
+                  <SelectContent className="z-50 max-h-60 overflow-y-auto">
+                    <SelectItem value="all">All Employees</SelectItem>
+                    {employees.map((emp) => (
+                      <SelectItem key={emp._id} value={emp.employeeId}>
+                        {emp.name} ({emp.employeeId})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             <div className="flex-1 min-w-[200px]">
               <Label htmlFor="departmentId">Department</Label>
               {user?.loginType === "HOD" ? (
@@ -378,6 +451,7 @@ function ODList() {
                   <SelectItem value="Approved">Approved</SelectItem>
                   <SelectItem value="Rejected">Rejected</SelectItem>
                   <SelectItem value="Acknowledged">Acknowledged</SelectItem>
+                  <SelectItem value="N/A">N/A</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -511,7 +585,11 @@ function ODList() {
                                       size="sm"
                                       className="bg-blue-600 hover:bg-blue-700 text-white"
                                       onClick={() =>
-                                        handleApproval(od._id, "Approved", "hod")
+                                        setShowApprovalModal({
+                                          id: od._id,
+                                          action: "approve",
+                                          stage: "hod"
+                                        })
                                       }
                                       disabled={
                                         loading || od.status?.hod !== "Pending"
@@ -525,7 +603,11 @@ function ODList() {
                                       size="sm"
                                       className="bg-red-600 hover:bg-red-700 text-white"
                                       onClick={() =>
-                                        handleApproval(od._id, "Rejected", "hod")
+                                        setShowApprovalModal({
+                                          id: od._id,
+                                          action: "reject",
+                                          stage: "hod"
+                                        })
                                       }
                                       disabled={
                                         loading || od.status?.hod !== "Pending"
@@ -545,7 +627,11 @@ function ODList() {
                                       size="sm"
                                       className="bg-blue-600 hover:bg-blue-700 text-white"
                                       onClick={() =>
-                                        handleApproval(od._id, "Approved", "ceo")
+                                        setShowApprovalModal({
+                                          id: od._id,
+                                          action: "approve",
+                                          stage: "ceo"
+                                        })
                                       }
                                       disabled={
                                         loading || od.status?.ceo !== "Pending"
@@ -559,7 +645,11 @@ function ODList() {
                                       size="sm"
                                       className="bg-red-600 hover:bg-red-700 text-white"
                                       onClick={() =>
-                                        handleApproval(od._id, "Rejected", "ceo")
+                                        setShowApprovalModal({
+                                          id: od._id,
+                                          action: "reject",
+                                          stage: "ceo"
+                                        })
                                       }
                                       disabled={
                                         loading || od.status?.ceo !== "Pending"
@@ -579,18 +669,18 @@ function ODList() {
                                       size="sm"
                                       className="bg-blue-600 hover:bg-blue-700 text-white"
                                       onClick={() =>
-                                        handleApproval(
-                                          od._id,
-                                          "Acknowledged",
-                                          "admin"
-                                        )
+                                        setShowApprovalModal({
+                                          id: od._id,
+                                          action: "acknowledge",
+                                          stage: "admin"
+                                        })
                                       }
                                       disabled={
                                         loading || od.status?.admin !== "Pending"
                                       }
                                       aria-label={`Acknowledge OD for ${od.name}`}
                                     >
-                                      Acknowledged
+                                      Acknowledge
                                     </Button>
                                   </div>
                                 )}
@@ -600,22 +690,53 @@ function ODList() {
                                 od.status?.ceo !== "Pending") ||
                               (user.loginType === "Admin" &&
                                 od.status?.admin !== "Pending") ? (
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  className="bg-yellow-500 hover:bg-yellow-600 text-white"
-                                  onClick={() =>
-                                    handleApproval(
-                                      od._id,
-                                      "Pending",
-                                      user.loginType.toLowerCase()
-                                    )
-                                  }
-                                  disabled={loading || !isWithin30Days}
-                                  aria-label={`Unlock OD for ${od.name}`}
-                                >
-                                  Unlock
-                                </Button>
+                                !unlockStatus[od._id] ? (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="bg-yellow-500 hover:bg-yellow-600 text-white"
+                                    onClick={() => handleUnlock(od._id)}
+                                    disabled={loading || !isWithin30Days}
+                                    aria-label={`Unlock OD for ${od.name}`}
+                                  >
+                                    Unlock
+                                  </Button>
+                                ) : (
+                                  <div className="flex gap-2">
+                                    <Button
+                                      variant="default"
+                                      size="sm"
+                                      className="bg-blue-600 hover:bg-blue-700 text-white"
+                                      onClick={() =>
+                                        setShowApprovalModal({
+                                          id: od._id,
+                                          action: user.loginType === "Admin" ? "acknowledge" : "approve",
+                                          stage: user.loginType.toLowerCase()
+                                        })
+                                      }
+                                      disabled={loading}
+                                      aria-label={`Grant Approval for ${od.name}`}
+                                    >
+                                      {user.loginType === "Admin" ? "Acknowledge" : "Grant Approval"}
+                                    </Button>
+                                    <Button
+                                      variant="destructive"
+                                      size="sm"
+                                      className="bg-red-600 hover:bg-red-700 text-white"
+                                      onClick={() =>
+                                        setShowApprovalModal({
+                                          id: od._id,
+                                          action: "reject",
+                                          stage: user.loginType.toLowerCase()
+                                        })
+                                      }
+                                      disabled={loading}
+                                      aria-label={`Dismiss Approval for ${od.name}`}
+                                    >
+                                      Dismiss Approval
+                                    </Button>
+                                  </div>
+                                )
                               ) : null}
                             </TableCell>
                           )}
@@ -672,6 +793,18 @@ function ODList() {
                       <strong>Place/Unit Visit:</strong>{" "}
                       {selectedOD.placeUnitVisit}
                     </p>
+                    <p>
+                      <strong>Status History:</strong>
+                      <ul className="list-disc pl-5 mt-2">
+                        {selectedOD.statusHistory?.map((history, index) => (
+                          <li key={index} className="text-sm">
+                            <strong>{history.stage.toUpperCase()}:</strong> {history.status} 
+                            {history.reason && ` (Reason: ${history.reason})`} 
+                            on {new Date(history.changedAt).toLocaleString()}
+                          </li>
+                        ))}
+                      </ul>
+                    </p>
                   </div>
                 )}
               </DialogContent>
@@ -723,6 +856,73 @@ function ODList() {
                 )}
               </DialogContent>
             </Dialog>
+       <Dialog
+  open={!!showApprovalModal}
+  onOpenChange={() => {
+    setShowApprovalModal(null);
+    setApprovalReason("");
+  }}
+>
+  <DialogContent className="max-w-md p-4 bg-white shadow-lg rounded-lg border border-gray-200">
+    <DialogHeader>
+      <DialogTitle className="text-lg font-semibold">
+        {showApprovalModal?.action === "approve" || showApprovalModal?.action === "acknowledge"
+          ? showApprovalModal.action === "acknowledge" ? "Acknowledge OD" : "Approve OD"
+          : "Reject OD"}
+      </DialogTitle>
+      <DialogDescription>
+        {showApprovalModal?.action === "approve" || showApprovalModal?.action === "acknowledge"
+          ? "Optionally provide a reason for approving this OD request."
+          : "Please provide a reason for rejecting this OD request."}
+      </DialogDescription>
+    </DialogHeader>
+    <div className="space-y-4 mt-4">
+      <div>
+        <Label htmlFor="reason">Reason {showApprovalModal?.action === "approve" || showApprovalModal?.action === "acknowledge" ? "(Optional)" : "(Required)"}</Label>
+        <Textarea
+          id="reason"
+          value={approvalReason}
+          onChange={(e) => setApprovalReason(e.target.value)}
+          placeholder={showApprovalModal?.action === "approve" || showApprovalModal?.action === "acknowledge"
+            ? "Enter reason (optional)"
+            : "Enter reason (required)"}
+          className="mt-1 border-gray-300 focus:ring-blue-500 focus:border-blue-500"
+        />
+      </div>
+      <div className="flex gap-2 justify-end">
+        <Button
+          variant="outline"
+          onClick={() => {
+            setShowApprovalModal(null);
+            setApprovalReason("");
+          }}
+          className="border-gray-300"
+        >
+          Cancel
+        </Button>
+        <Button
+          onClick={() => {
+            const odRecord = odRecords.find((record) => record._id === showApprovalModal?.id);
+            const status = showApprovalModal.action === "acknowledge" ? "Acknowledged" : 
+                          showApprovalModal.action === "approve" ? "Approved" : "Rejected";
+            handleApproval(
+              showApprovalModal.id,
+              status,
+              showApprovalModal.stage,
+              approvalReason
+            );
+            setShowApprovalModal(null);
+            setApprovalReason("");
+          }}
+          className="bg-blue-600 text-white hover:bg-blue-700"
+          disabled={(showApprovalModal?.action === "reject" || unlockStatus[showApprovalModal?.id]) && !approvalReason.trim()}
+        >
+          Save
+        </Button>
+      </div>
+    </div>
+  </DialogContent>
+</Dialog>
           </div>
         </CardContent>
       </Card>

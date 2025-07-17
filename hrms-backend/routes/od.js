@@ -376,7 +376,7 @@ router.put(
         return res.status(404).json({ message: "User not found" });
       }
 
-      const { status } = req.body;
+      const { status, reason } = req.body;
       const currentStage = req.user.role.toLowerCase();
       const validStatuses =
         req.user.role === "Admin" ? ["Acknowledged"] : ["Approved", "Rejected"];
@@ -391,87 +391,109 @@ router.put(
 
       const thirtyDaysAgo = new Date();
       thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-      if (new Date(od.recordedAt) < thirtyDaysAgo && od.status[currentStage] !== "Pending") {
+      if (new Date(od.dateOut) < thirtyDaysAgo && od.status[currentStage] !== "Pending") {
         return res.status(403).json({ message: "Cannot modify status after 30 days" });
       }
 
-      if (od.status[currentStage] !== "Pending" && status !== od.status[currentStage]) {
-        if (req.user.role === "HOD" && user.department.toString() !== od.department.toString()) {
-          return res.status(403).json({ message: "Not authorized to modify ODs for this department" });
-        }
-        if (req.user.role === "CEO" && !["Approved", "Submitted"].includes(od.status.hod)) {
-          return res.status(400).json({ message: "OD must be approved or submitted by HOD first" });
-        }
-        if (req.user.role === "Admin" && od.status.ceo !== "Approved") {
-          return res.status(400).json({ message: "OD must be approved by CEO first" });
-        }
-        // Reset other statuses to N/A if current status is changed
-        if (status === "Rejected") {
-          od.status.hod = currentStage === "hod" ? "Rejected" : od.status.hod === "Approved" ? "N/A" : od.status.hod;
-          od.status.ceo = currentStage === "ceo" ? "Rejected" : od.status.ceo === "Approved" ? "N/A" : od.status.ceo;
-          od.status.admin = currentStage === "admin" ? "Rejected" : od.status.admin === "Acknowledged" ? "N/A" : od.status.admin;
-        } else {
-          od.status[currentStage] = status;
-        }
-      } else if (od.status[currentStage] === "Pending") {
-        if (req.user.role === "HOD" && user.department.toString() !== od.department.toString()) {
-          return res.status(403).json({ message: "Not authorized to approve ODs for this department" });
-        }
-        if (req.user.role === "CEO" && !["Approved", "Submitted"].includes(od.status.hod)) {
-          return res.status(400).json({ message: "OD must be approved or submitted by HOD first" });
-        }
-        if (req.user.role === "Admin" && od.status.ceo !== "Approved") {
-          return res.status(400).json({ message: "OD must be approved by CEO first" });
-        }
+      // Authorization checks
+      if (req.user.role === "HOD" && user.department.toString() !== od.department.toString()) {
+        return res.status(403).json({ message: "Not authorized to modify ODs for this department" });
+      }
+      if (req.user.role === "CEO" && !["Approved", "Submitted"].includes(od.status.hod)) {
+        return res.status(400).json({ message: "OD must be approved or submitted by HOD first" });
+      }
+      if (req.user.role === "Admin" && od.status.ceo !== "Approved") {
+        return res.status(400).json({ message: "OD must be approved by CEO first" });
+      }
 
+      // Update status and handle transitions
+      if (status === "Rejected") {
+        od.status.hod = currentStage === "hod" ? "Rejected" : od.status.hod;
+        od.status.ceo = currentStage === "hod" || currentStage === "ceo" ? "N/A" : od.status.ceo;
+        od.status.admin = currentStage === "hod" || currentStage === "ceo" || currentStage === "admin" ? "N/A" : od.status.admin;
+      } else {
         od.status[currentStage] = status;
-
         if (status === "Approved" && currentStage === "hod") {
           od.status.ceo = "Pending";
-          const ceo = await Employee.findOne({ loginType: "CEO" });
-          if (ceo) {
-            await Notification.create({
-              userId: ceo.employeeId,
-              message: `OD request from ${od.name} awaiting CEO approval`
-            });
-            if (global._io) global._io.to(ceo.employeeId).emit('notification', { message: `OD request from ${od.name} awaiting CEO approval` });
-          }
+          od.status.admin = "Pending";
         } else if (["Approved", "Submitted"].includes(status) && currentStage === "ceo") {
           od.status.admin = "Pending";
-          const admin = await Employee.findOne({ loginType: "Admin" });
-          if (admin) {
-            await Notification.create({
-              userId: admin.employeeId,
-              message: `OD request from ${od.name} awaiting Admin acknowledgment`
-            });
-            if (global._io) global._io.to(admin.employeeId).emit('notification', { message: `OD request from ${od.name} awaiting Admin acknowledgment` });
-          }
         }
       }
 
+      // Add to status history
+      od.statusHistory.push({
+        stage: currentStage,
+        status,
+        reason: reason || "No reason provided",
+        changedBy: user._id,
+        changedAt: new Date()
+      });
+
       await od.save();
+
+      // Create audit log
       await Audit.create({
         user: user.employeeId,
         action: `${status} OD`,
-        details: `${status} OD request for ${od.name}`
+        details: `${status} OD request for ${od.name} with reason: ${reason || "No reason provided"}`
       });
 
+      // Notify employee
       const employee = await Employee.findById(od.employee);
       if (employee) {
         await Notification.create({
           userId: employee.employeeId,
-          message: `Your OD request has been ${status.toLowerCase()} by ${currentStage.toUpperCase()}`
+          message: `Your OD request has been ${status.toLowerCase()} by ${currentStage.toUpperCase()}. Reason: ${reason || "No reason provided"}`
         });
-        if (global._io) global._io.to(employee.employeeId).emit('notification', { message: `Your OD request has been ${status.toLowerCase()} by ${currentStage.toUpperCase()}` });
+        if (global._io) {
+          global._io.to(employee.employeeId).emit('notification', {
+            message: `Your OD request has been ${status.toLowerCase()} by ${currentStage.toUpperCase()}. Reason: ${reason || "No reason provided"}`
+          });
+        }
       }
-      // Notify Admin and Employee on status change
+
+      // Notify next approver or admin
+      if (status === "Approved" && currentStage === "hod") {
+        const ceo = await Employee.findOne({ loginType: "CEO" });
+        if (ceo) {
+          await Notification.create({
+            userId: ceo.employeeId,
+            message: `OD request from ${od.name} awaiting CEO approval`
+          });
+          if (global._io) {
+            global._io.to(ceo.employeeId).emit('notification', {
+              message: `OD request from ${od.name} awaiting CEO approval`
+            });
+          }
+        }
+      } else if (["Approved", "Submitted"].includes(status) && currentStage === "ceo") {
+        const admin = await Employee.findOne({ loginType: "Admin" });
+        if (admin) {
+          await Notification.create({
+            userId: admin.employeeId,
+            message: `OD request from ${od.name} awaiting Admin acknowledgment`
+          });
+          if (global._io) {
+            global._io.to(admin.employeeId).emit('notification', {
+              message: `OD request from ${od.name} awaiting Admin acknowledgment`
+            });
+          }
+        }
+      }
+
+      // Notify admin of status change
       const admin = await Employee.findOne({ loginType: "Admin" });
       if (admin) {
         await Notification.create({
           userId: admin.employeeId,
-          message: `OD request status for ${od.name} changed to ${status} by ${currentStage.toUpperCase()}`
+          message: `OD request status for ${od.name} changed to ${status} by ${currentStage.toUpperCase()}. Reason: ${reason || "No reason provided"}`
         });
-        if (global._io) global._io.to(admin.employeeId).emit('notification', { message: `OD request status for ${od.name} changed to ${status} by ${currentStage.toUpperCase()}` });
+        if (global._io) {
+          global._io.to(admin.employeeId).emit('notification', {
+            message: `OD request status for ${od.name} changed to ${status} by ${currentStage.toUpperCase()}. Reason: ${reason || "No reason provided"}`
+          });
+        }
       }
 
       res.json(od);
@@ -481,4 +503,5 @@ router.put(
     }
   }
 );
+
 export default router;

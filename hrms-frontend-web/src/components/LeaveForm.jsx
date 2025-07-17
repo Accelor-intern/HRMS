@@ -18,14 +18,15 @@ import api from "../services/api";
 import ContentLayout from "./ContentLayout";
 import '../App.css';
 
+const isEmergency = false;
 function LeaveForm() {
   const { user } = useContext(AuthContext);
   const [leaveSegments, setLeaveSegments] = useState([
     {
       leaveType: "",
-      isEmergency: true,
+      isEmergency,
       dates: {
-       from: new Date().toISOString().split("T")[0], // Set to todays date for emeergency
+      from: isEmergency ? new Date().toISOString().split("T")[0] : "",
         to: "",
         fromDuration: "full",
         fromSession: "forenoon",
@@ -802,7 +803,7 @@ const handleSubmit = async (e) => {
     <ContentLayout title="Apply for Leave">
       <div className="flex flex-col md:flex-row gap-6">
         <div className="mb-6">
-          <h4 className="text-md font-medium mb-2">Leave Balances</h4>
+          <h3 className="text-lg font-semibold mb-4 text-red-700">Leave Balances</h3>
           <div className="grid grid-cols-1 gap-4">
             {getLeaveBalanceDisplay().map((balance, index) => (
               <div
@@ -828,26 +829,40 @@ const handleSubmit = async (e) => {
                       {segment.isEmergency ? "Leave Form" : "Leave Form"}
                     </h3>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      {canApplyEmergencyLeave && (
-                        <div className="col-span-2">
-                          <Label className="text-blue-800">Leave Category</Label>
-   <Select
-            onValueChange={(value) =>
-              handleSegmentChange(index, { target: { name: "isEmergency", value } })
-            }
-            value={segment.isEmergency.toString()}
-            disabled={true} // Disable the entire select for all segments
-          >
-            <SelectTrigger className="bg-white text-blue-900 font-bold border-gray-700">
-              <SelectValue placeholder="Select emergency status" />
-            </SelectTrigger>
-            <SelectContent className="bg-gray-800 text-white border-gray-700">
-              <SelectItem value="false" disabled={segment.isEmergency} className="hover:bg-gray-700">Regular Leave</SelectItem>
-              <SelectItem value="true" disabled={!segment.isEmergency} className="hover:bg-gray-700">Emergency Leave</SelectItem>
-            </SelectContent>
-          </Select>
-                        </div>
-                      )}
+{canApplyEmergencyLeave && (
+  <div className="col-span-2">
+    <Label className="text-blue-800">Leave Category</Label>
+    <Select
+      onValueChange={(value) =>
+        handleSegmentChange(index, { target: { name: "isEmergency", value } })
+      }
+      value={segment.isEmergency.toString()}
+    >
+      <SelectTrigger className="bg-white text-blue-900 font-bold border-gray-700">
+        <SelectValue placeholder="Select emergency status" />
+      </SelectTrigger>
+     <SelectContent className="bg-white text-black border-gray-700">
+  <SelectItem
+    value="false"
+    className="hover:bg-gray-100"
+    disabled={index === 0 && segment.isEmergency === true}
+  >
+    Regular Leave
+  </SelectItem>
+
+  <SelectItem
+    value="true"
+    className="hover:bg-gray-100"
+    disabled={leaveSegments.some((s, i) => i !== index && s.isEmergency)}
+  >
+    Emergency Leave
+  </SelectItem>
+</SelectContent>
+
+    </Select>
+  </div>
+)}
+
                       <div className="col-span-2">
                         <Label htmlFor={`leaveType-${index}`} className="text-blue-800">Leave Type</Label>
                         <Select
@@ -1159,14 +1174,14 @@ const handleSubmit = async (e) => {
                   </Select>
                 </div>
                 <div>
-                  <Label htmlFor="emergencyContact" className="text-blue-800">Emergency Contact Add. & No.</Label>
+                  <Label htmlFor="emergencyContact" className="text-blue-800">Contact Address & Mobile Number During Leave</Label>
                   <Input
                     id="emergencyContact"
                     name="emergencyContact"
                     type="text"
                     value={commonFields.emergencyContact}
                     onChange={handleCommonFieldChange}
-                    placeholder="Enter emergency contact"
+                    placeholder="Enter Contact Address & Mobile Number"
                   />
                 </div>
                 <div className="col-span-2 flex justify-end mt-4">

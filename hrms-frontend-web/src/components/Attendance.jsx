@@ -36,7 +36,7 @@ function Attendance() {
   const initialFilters = useMemo(
     () => ({
       employeeId: user?.loginType === "Employee" ? user?.employeeId || "" : "",
-      name: "",
+      name: user?.loginType === "Employee" ? user?.name || "" : "",
       departmentId:
         user?.loginType === "HOD" && user?.department
           ? user.department._id
@@ -48,8 +48,10 @@ function Attendance() {
     [user]
   );
   const [attendance, setAttendance] = useState([]);
+  const [employees, setEmployees] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [filters, setFilters] = useState(initialFilters);
+  const [availableStatuses, setAvailableStatuses] = useState(["all"]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
@@ -112,6 +114,17 @@ function Attendance() {
       setAttendance(attendanceData);
       setTotal(res.data.total || 0);
 
+      // Dynamically generate available statuses for employee
+      if (user?.loginType === "Employee") {
+        const uniqueStatuses = [
+          "all",
+          ...new Set(
+            attendanceData.map((record) => record.status.split(" & ")[0]) // Consider only the first status part for simplicity
+          ),
+        ];
+        setAvailableStatuses(uniqueStatuses);
+      }
+
       if (user?.loginType === "Admin") {
         const alertsRes = await api.get("/attendance/absence-alerts");
         const alerts = alertsRes.data.reduce((acc, alert) => {
@@ -152,6 +165,21 @@ function Attendance() {
     }
   }, [user]);
 
+  const fetchEmployees = useCallback(async () => {
+  try {
+    const res = await api.get(`/employees/by-department/${user?.department?._id}`);
+    setEmployees(res.data);
+  } catch (err) {
+    console.error("Error fetching employees:", err);
+    setError("Failed to load employees");
+  }
+}, [user?.department?._id]);
+
+useEffect(() => {
+  if (user?.loginType === "HOD" && user?.department?._id) {
+    fetchEmployees();
+  }
+}, [user, fetchEmployees]);
   useEffect(() => {
     if (user?.loginType === "HOD" && user?.department) {
       setDepartments([{ _id: user.department._id, name: user.department.name }]);
@@ -163,6 +191,7 @@ function Attendance() {
       fetchAttendance({
         ...initialFilters,
         employeeId: user?.employeeId || "",
+        name: user?.name || "",
       });
     } else if (user) {
       fetchDepartments();
@@ -204,12 +233,13 @@ function Attendance() {
     fetchAttendance(filters);
   };
 
-  const handleDownload = async (status) => {
+  const handleDownload = async () => {
     try {
-      const normalizedFilters = { ...filters, status };
+      const normalizedFilters = { ...filters };
       if (normalizedFilters.departmentId === "all") {
         delete normalizedFilters.departmentId;
       }
+      delete normalizedFilters.status; // Remove status filter for full download
       const res = await api.get("/attendance/download", {
         params: normalizedFilters,
         responseType: "blob",
@@ -217,7 +247,7 @@ function Attendance() {
       const url = window.URL.createObjectURL(new Blob([res.data]));
       const link = document.createElement("a");
       link.href = url;
-      link.setAttribute("download", `attendance_${status}_${filters.fromDate}.xlsx`);
+      link.setAttribute("download", `attendance_${filters.fromDate}.xlsx`);
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -324,7 +354,6 @@ function Attendance() {
       totalMins <= 555 // 09:15
     );
   };
-
   const handleApologizeClick = (record) => {
     const employeeApologyCount = apologyCounts[record.employeeId]?.count || 0;
     if (employeeApologyCount >= 3) {
@@ -451,7 +480,7 @@ function Attendance() {
         );
       } else { // After 12:00 PM (AN)
         updatedStatus = updatedStatus.replace(
-/AN: Late Arrival \(Approval Pending\)/,
+          /AN: Late Arrival \(Approval Pending\)/,
           "AN: Late Arrival (Denied)"
         );
       }
@@ -495,109 +524,220 @@ function Attendance() {
               {error}
             </div>
           )}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5 }}
-            className="mb-6 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4"
-          >
-            <div className="flex-1 min-w-[200px]">
-              <Label htmlFor="employeeId">Employee ID</Label>
-              <Input
-                id="employeeId"
-                name="employeeId"
-                value={filters.employeeId}
-                onChange={(e) => handleChange("employeeId", e.target.value)}
-                placeholder="Employee ID"
-                disabled={user?.loginType === "Employee"}
-                className="mt-1 border-gray-300 focus:ring-blue-500 focus:border-blue-500"
-              />
-            </div>
-            <div className="flex-1 min-w-[200px]">
-              <Label htmlFor="name">Name</Label>
-              <Input
-                id="name"
-                name="name"
-                value={filters.name}
-                onChange={(e) => handleChange("name", e.target.value)}
-                placeholder="Employee Name"
-                className="mt-1 border-gray-300 focus:ring-blue-500 focus:border-blue-500"
-              />
-            </div>
-            <div className="flex-1 min-w-[200px]">
-              <Label htmlFor="departmentId">Department</Label>
-              {user?.loginType === "HOD" ? (
-                <Input
-                  id="departmentId"
-                  value={hodDepartmentName}
-                  readOnly
-                  className="mt-1 border-gray-300 bg-gray-100 cursor-not-allowed"
-                  placeholder="Your Department"
-                />
-              ) : user?.loginType === "Employee" ? (
-                <Input
-                  id="departmentId"
-                  value={user?.department?.name || "Unknown"}
-                  readOnly
-                  className="mt-1 border-gray-300 bg-gray-100 cursor-not-allowed"
-                  placeholder="Your Department"
-                />
-              ) : (
-                <Select
-                  onValueChange={(value) => handleChange("departmentId", value)}
-                  value={filters.departmentId}
-                  disabled={loading}
-                >
-                  <SelectTrigger
-                    id="departmentId"
-                    className="mt-1 border-gray-300 focus:ring-blue-500 focus:border-blue-500"
-                  >
-                    <SelectValue placeholder="All Departments" />
-                  </SelectTrigger>
-                  <SelectContent className="z-50">
-                    <SelectItem value="all">All Departments</SelectItem>
-                    {departments.map((dep) => (
-                      <SelectItem key={dep._id} value={dep._id}>
-                        {dep.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
-            </div>
-            <div className="flex-1 min-w-[200px]">
-              <Label htmlFor="fromDate">From Date</Label>
-              <Input
-                id="fromDate"
-                name="fromDate"
-                type="date"
-                value={filters.fromDate}
-                onChange={(e) => handleChange("fromDate", e.target.value)}
-                className="mt-1 border-gray-300 focus:ring-blue-500 focus:border-blue-500"
-                disabled={loading}
-              />
-            </div>
-            <div className="flex-1 min-w-[200px]">
-              <Label htmlFor="toDate">To Date</Label>
-              <Input
-                id="toDate"
-                name="toDate"
-                type="date"
-                value={filters.toDate}
-                onChange={(e) => handleChange("toDate", e.target.value)}
-                className="mt-1 border-gray-300 focus:ring-blue-500 focus:border-blue-500"
-                disabled={loading}
-              />
-            </div>
-            <div className="flex gap-2 items-end">
-              <Button
-                onClick={handleFilter}
-                className="px-4 py-2 bg-blue-600 text-white"
-              >
-                Filter
-              </Button>
-            </div>
-          </motion.div>
+    <motion.div
+  initial={{ opacity: 0, y: 20 }}
+  animate={{ opacity: 1, y: 0 }}
+  transition={{ duration: 0.5 }}
+  className="mb-6 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4"
+>
+  <div className="flex-1 min-w-[200px]">
+    <Label htmlFor="employeeId">Employee ID</Label>
+    {user?.loginType === "HOD" ? (
+      <Input
+        id="employeeId"
+        name="employeeId"
+        value={user?.employeeId || ""}
+        readOnly
+        className="mt-1 border-gray-300 bg-gray-100 cursor-not-allowed"
+        placeholder="Your Employee ID"
+      />
+    ) : (
+      <Input
+        id="employeeId"
+        name="employeeId"
+        value={filters.employeeId}
+        readOnly={user?.loginType === "Employee"}
+        className="mt-1 border-gray-300 bg-gray-100 cursor-not-allowed"
+        placeholder="Your Employee ID"
+        disabled={user?.loginType === "Employee"}
+      />
+    )}
+  </div>
+  <div className="flex-1 min-w-[200px]">
+    <Label htmlFor="name">Name</Label>
+    {user?.loginType === "HOD" ? (
+      <Input
+        id="name"
+        name="name"
+        value={user?.name || ""}
+        readOnly
+        className="mt-1 border-gray-300 bg-gray-100 cursor-not-allowed"
+        placeholder="Your Name"
+      />
+    ) : (
+      <Input
+        id="name"
+        name="name"
+        value={filters.name}
+        readOnly
+        className="mt-1 border-gray-300 bg-gray-100 cursor-not-allowed"
+        placeholder="Your Name"
+        disabled={user?.loginType === "Employee"}
+      />
+    )}
+  </div>
+  <div className="flex-1 min-w-[200px]">
+    <Label htmlFor="departmentId">Department</Label>
+    {user?.loginType === "HOD" ? (
+      <Input
+        id="departmentId"
+        value={user?.department?.name || "Unknown"}
+        readOnly
+        className="mt-1 border-gray-300 bg-gray-100 cursor-not-allowed"
+        placeholder="Your Department"
+      />
+    ) : user?.loginType === "Employee" ? (
+      <Input
+        id="departmentId"
+        value={user?.department?.name || "Unknown"}
+        readOnly
+        className="mt-1 border-gray-300 bg-gray-100 cursor-not-allowed"
+        placeholder="Your Department"
+      />
+    ) : (
+      <Select
+        onValueChange={(value) => handleChange("departmentId", value)}
+        value={filters.departmentId}
+        disabled={loading}
+      >
+        <SelectTrigger
+          id="departmentId"
+          className="mt-1 border-gray-300 focus:ring-blue-500 focus:border-blue-500"
+        >
+          <SelectValue placeholder="All Departments" />
+        </SelectTrigger>
+        <SelectContent className="z-50">
+          <SelectItem value="all">All Departments</SelectItem>
+          {departments.map((dep) => (
+            <SelectItem key={dep._id} value={dep._id}>
+              {dep.name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    )}
+  </div>
+<div className="flex-1 min-w-[200px]">
+{user?.loginType === "HOD" && (
+  <div className="flex-1 min-w-[200px] relative">
+    <Label htmlFor="employeeName" className="text-sm font-medium">
+      Employee Name or ID
+    </Label>
+    <Select
+      onValueChange={(value) => {
+        const selectedEmployee = employees.find(emp => emp.employeeId === value);
+        handleChange("name", selectedEmployee?.name || "");
+        handleChange("employeeId", value);
+        fetchAttendance({
+          ...filters,
+          name: selectedEmployee?.name || "",
+          employeeId: value,
+        });
+      }}
+      value={filters.employeeId || ""}
+    >
+      <SelectTrigger className="border px-3 py-2 rounded-md w-full">
+        <SelectValue placeholder="Select Employee Name" />
+      </SelectTrigger>
+      <SelectContent className="z-50 max-h-60 overflow-y-auto">
+        <SelectItem value="all">All Employees</SelectItem>
+        {employees.map(emp => (
+          <SelectItem key={emp._id} value={emp.employeeId}>
+            {emp.name} ({emp.employeeId})
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  </div>
+)}
+
+</div>
+
+  <div className="flex-1 min-w-[200px]">
+    <Label htmlFor="status">Status</Label>
+    {user?.loginType === "Employee" ? (
+      <Select
+        onValueChange={(value) => handleChange("status", value)}
+        value={filters.status}
+        disabled={loading}
+      >
+        <SelectTrigger
+          id="status"
+          className="mt-1 border-gray-300 focus:ring-blue-500 focus:border-blue-500"
+        >
+          <SelectValue placeholder="All Statuses" />
+        </SelectTrigger>
+        <SelectContent className="z-50">
+          {availableStatuses.map((status) => (
+            <SelectItem key={status} value={status}>
+              {status === "all" ? "All Statuses" : status}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    ) : (
+      <Select
+        onValueChange={(value) => handleChange("status", value)}
+        value={filters.status}
+        disabled={loading}
+      >
+        <SelectTrigger
+          id="status"
+          className="mt-1 border-gray-300 focus:ring-blue-500 focus:border-blue-500"
+        >
+          <SelectValue placeholder="All Statuses" />
+        </SelectTrigger>
+        <SelectContent className="z-50">
+          <SelectItem value="all">All Statuses</SelectItem>
+          <SelectItem value="Present">Present</SelectItem>
+          <SelectItem value="Absent">Absent</SelectItem>
+          <SelectItem value="Late Arrival">Late Arrival</SelectItem>
+          <SelectItem value="Late Arrival (Approval Pending)">
+            Late Arrival (Approval Pending)
+          </SelectItem>
+          <SelectItem value="Late Arrival (Allowed)">
+            Late Arrival (Allowed)
+          </SelectItem>
+          <SelectItem value="Late Arrival (Denied)">
+            Late Arrival (Denied)
+          </SelectItem>
+        </SelectContent>
+      </Select>
+    )}
+  </div>
+  <div className="flex-1 min-w-[200px]">
+    <Label htmlFor="fromDate">From Date</Label>
+    <Input
+      id="fromDate"
+      name="fromDate"
+      type="date"
+      value={filters.fromDate}
+      onChange={(e) => handleChange("fromDate", e.target.value)}
+      className="mt-1 border-gray-300 focus:ring-blue-500 focus:border-blue-500"
+      disabled={loading}
+    />
+  </div>
+  <div className="flex-1 min-w-[200px]">
+    <Label htmlFor="toDate">To Date</Label>
+    <Input
+      id="toDate"
+      name="toDate"
+      type="date"
+      value={filters.toDate}
+      onChange={(e) => handleChange("toDate", e.target.value)}
+      className="mt-1 border-gray-300 focus:ring-blue-500 focus:border-blue-500"
+      disabled={loading}
+    />
+  </div>
+  <div className="flex gap-2 items-end">
+    <Button
+      onClick={handleFilter}
+      className="px-4 py-2 bg-blue-600 text-white"
+    >
+      Filter
+    </Button>
+  </div>
+</motion.div>
           {loading ? (
             <p className="text-center py-4">Loading...</p>
           ) : attendance.length === 0 ? (
@@ -715,18 +855,29 @@ function Attendance() {
                 </Table>
               </div>
               <div className="mt-4 flex justify-end gap-2">
-                <Button
-                  onClick={() => handleDownload("Present")}
-                  className="bg-green-600 hover:bg-green-700 text-white"
-                >
-                  Download Present
-                </Button>
-                <Button
-                  onClick={() => handleDownload("Absent")}
-                  className="bg-red-600 hover:bg-red-700 text-white"
-                >
-                  Download Absent
-                </Button>
+              {["Employee", "HOD", "CEO", "Admin"].includes(user?.loginType) ? (
+                  <Button
+                    onClick={handleDownload}
+                    className="bg-green-600 hover:bg-green-700 text-white"
+                  >
+                    Download Attendance
+                  </Button>
+                ) : (
+                  <>
+                    <Button
+                      onClick={() => handleDownload("Present")}
+                      className="bg-green-600 hover:bg-green-700 text-white"
+                    >
+                      Download Present
+                    </Button>
+                    <Button
+                      onClick={() => handleDownload("Absent")}
+                      className="bg-red-600 hover:bg-red-700 text-white"
+                    >
+                      Download Absent
+                    </Button>
+                  </>
+                )}
               </div>
               <Pagination
                 currentPage={currentPage}

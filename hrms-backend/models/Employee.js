@@ -112,9 +112,11 @@ const employeeSchema = new mongoose.Schema({
   lastPunchMissedSubmission: { type: Date }, // Tracks last Punch Missed Form submission
     shift: { 
     type: String, 
-    enum: ['Regular', 'B Shift', 'C Shift'], 
-    default: 'Regular' 
+    enum: ['General (09:00-17:30)', 'Shift A (06:00-14:30)', 'Shift B (14:00-22:30)','Shift C (22:00-06:30)','Regular'], 
+    default: 'General (09:00-17:30)' 
   }, // Shift assignment: Regular (9:00 AM–5:30 PM), B Shift (2:00 PM–10:30 PM), C Shift (10:00 PM–6:30 AM)
+    shiftEffectiveFrom: { type: Date, default: Date.now }, // Effective date of shift assignment
+  shiftValidUpto: { type: Date }, // Validity end date of shift assignment
   attendanceHistory: [{ // New field for attendance history
     date: { type: Date, required: true },
     status: { type: String, enum: ['Present', 'Absent', 'On Leave'], required: true },
@@ -122,6 +124,7 @@ const employeeSchema = new mongoose.Schema({
     leaveId: { type: mongoose.Schema.Types.ObjectId, ref: 'Leave', default: null }
   }]
 }, { timestamps: true });
+  
 
 // Middleware to handle password hashing
 employeeSchema.pre('save', async function(next) {
@@ -138,7 +141,7 @@ employeeSchema.pre('save', async function(next) {
       await Audit.create({
         action: 'update_shift',
         user: 'system', // Will be updated in the API to use req.user.id
-        details: `Shift changed for employee ${this.employeeId} to ${this.shift}`,
+        details: `Shift changed for employee ${this.employeeId} to ${this.shift} from ${this.shiftEffectiveFrom} to ${this.shiftValidUpto || 'ongoing'}`,
       });
     } catch (auditErr) {
       console.warn('Audit logging for shift change failed:', auditErr.message);

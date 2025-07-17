@@ -659,54 +659,271 @@ router.get('/next-composite-id', auth, async (req, res) => {
 });
 
 
-// Edit Leave to Upload Medical Certificate
 router.put(
-  "/:id/upload-certificate",
+  "/:id/approve",
   auth,
-  role(["Employee"]),
-  upload.single("medicalCertificate"),
+  role(["HOD", "CEO", "Admin"]),
   async (req, res) => {
     try {
-      const leave = await Leave.findById(req.params.id);
+      const leave = await Leave.findById(req.params.id)
+        .populate("employee")
+        .populate("chargeGivenTo");
       if (!leave) {
         return res.status(404).json({ message: "Leave request not found" });
       }
-      if (leave.employee.toString() !== req.user.id) {
-        return res.status(403).json({ message: "Not authorized to edit this leave" });
-      }
-      if (leave.leaveType !== "Medical") {
-        return res.status(400).json({ message: "This endpoint is only for Medical leave certificate uploads" });
-      }
-      if (leave.status.hod !== "Pending" || leave.status.ceo !== "Pending" || leave.status.admin !== "Pending") {
-        return res.status(400).json({ message: "Cannot edit certificate after approval process has started" });
-      }
-      if (!req.file) {
-        return res.status(400).json({ message: "Medical certificate file is required" });
+
+      const user = await Employee.findById(req.user.id);
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
       }
 
-      const fileData = await uploadToGridFS(req.file, {
-        employeeId: leave.employeeId,
-        leaveType: "Medical",
-      });
+      const { status, remarks, approvedDates, rejectedDates } = req.body;
+      const currentStage = req.user.role.toLowerCase();
+      const validStatuses =
+        req.user.role === "Admin" ? ["Acknowledged"] : ["Approved", "Rejected"];
 
-      leave.medicalCertificate = fileData._id;
+      if (!validStatuses.includes(status)) {
+        return res
+          .status(400)
+          .json({
+            message: `Invalid status. Must be one of ${validStatuses.join(", ")}`,
+          });
+      }
+
+      if (leave.status[currentStage] !== "Pending") {
+        return res
+          .status(400)
+          .json({
+            message: `Leave is not pending ${currentStage.toUpperCase()} approval`,
+          });
+      }
+
+      if (
+        (status === "Rejected" || status === "Approved") &&
+        ["hod", "ceo"].includes(currentStage) &&
+        (!remarks || remarks.trim() === "")
+      ) {
+        return res
+          .status(400)
+          .json({ message: "Remarks are required for approval or rejection" });
+      }
+
+      if (
+        req.user.role === "HOD" &&
+        user.department.toString() !== leave.department.toString()
+      ) {
+        return res
+          .status(403)
+          .json({
+            message: "Not authorized to approve leaves for this department",
+          });
+      }
+
+      if (req.user.role === "CEO" && !["Approved", "Submitted"].includes(leave.status.hod)) {
+        return res
+          .status(400)
+          .json({ message: "Leave must be approved or Submitted by HOD first" });
+      }
+
+      if (req.user.role === "Admin" && leave.status.ceo !== "Approved") {
+        return res
+          .status(400)
+          .json({ message: "Leave must be approved by CEO first" });
+      }
+
+      if (req.user.role === "CEO" && leave.leaveType === "Medical" && !leave.medicalCertificate) {
+        return res
+          .status(403)
+          .json({ message: "Medical leave without certificate not visible to CEO" });
+      }
+
+      if (req.user.role === "Admin" && leave.leaveType === "Medical" && !leave.medicalCertificate) {
+        return res
+          .status(400)
+          .json({ message: "Medical leave cannot be acknowledged without a medical certificate" });
+      }
+
+      leave.status[currentStage] = status;
+      // Store remarks for both approval and rejection
+      if (remarks && remarks.trim() !== "") {
+        leave.remarks = remarks;
+      }
+
+      if (approvedDates && rejectedDates) {
+        const allDates = getAllDates(leave.fullDay.from, leave.fullDay.to);
+        if (approvedDates.length + rejectedDates.length !== allDates.length) {
+          return res.status(400).json({ message: "All dates must be either approved or rejected" });
+        }
+        leave.approvedDates = approvedDates;
+        leave.rejectedDates = rejectedDates;
+      } else if (status === "Approved") {
+        leave.approvedDates = getAllDates(leave.fullDay.from, leave.fullDay.to).map(date => ({ date, duration: 'full' }));
+        leave.rejectedDates = [];
+      } else if (status === "Rejected") {
+        leave.rejectedDates = getAllDates(leave.fullDay.from, leave.fullDay.to).map(date => ({ date, duration: 'full' }));
+        leave.approvedDates = [];
+      }
+
+      if (["Approved", "Submitted"].includes(status) && currentStage === "hod") {
+        leave.status.ceo = "Pending";
+        const ceo = await Employee.findOne({ loginType: "CEO" });
+        if (ceo) {
+          await Notification.create({
+            userId: ceo.employeeId,
+            message: `Leave request from ${leave.name} awaiting your approval${
+              remarks ? ` with note: ${remarks}` : ""
+            }`,
+          });
+          if (global._io) {
+            global._io
+              .to(ceo.employeeId)
+              .emit("notification", {
+                message: `Leave request from ${leave.name} awaiting your approval${
+                  remarks ? ` with note: ${remarks}` : ""
+                }`,
+              });
+          }
+        }
+      }
+
+      if (status === "Approved" && currentStage === "ceo") {
+        leave.status.admin = "Pending";
+        const admin = await Employee.findOne({ loginType: "Admin" });
+        if (admin) {
+          await Notification.create({
+            userId: admin.employeeId,
+            message: `Leave request from ${leave.name} awaiting your acknowledgment${
+              remarks ? ` with note: ${remarks}` : ""
+            }`,
+          });
+          if (global._io) {
+            global._io
+              .to(admin.employeeId)
+              .emit("notification", {
+                message: `Leave request from ${leave.name} awaiting your acknowledgment${
+                  remarks ? ` with note: ${remarks}` : ""
+                }`,
+              });
+          }
+        }
+      }
+
+      if (status === "Acknowledged" && currentStage === "admin") {
+        const employee = leave.employee;
+        const totalApprovedDays = leave.approvedDates.length + (leave.approvedDates.some(d => d.duration === 'half') ? 0.5 : 0);
+        switch (leave.leaveType) {
+          case "Casual":
+            await employee.deductPaidLeaves(leave.fullDay.from, leave.fullDay.to, leave.leaveType, totalApprovedDays);
+            break;
+          case "Medical":
+            await employee.deductMedicalLeaves(leave, totalApprovedDays);
+            break;
+          case "Maternity":
+            await employee.recordMaternityClaim();
+            break;
+          case "Paternity":
+            await employee.recordPaternityClaim();
+            break;
+          case "Restricted Holidays":
+            await employee.deductRestrictedHolidays();
+            break;
+          case "Compensatory":
+            const entry = employee.compensatoryAvailable.find(
+              (e) => e._id.toString() === leave.compensatoryEntryId.toString()
+            );
+            if (entry) {
+              entry.status = "Used";
+            }
+            await employee.deductCompensatoryLeaves(leave.compensatoryEntryId);
+            break;
+          case "Emergency":
+            if (employee.paidLeaves >= totalApprovedDays) {
+              await employee.deductPaidLeaves(leave.fullDay.from, leave.fullDay.to, leave.leaveType, totalApprovedDays);
+            } else {
+              await employee.incrementUnpaidLeaves(leave.fullDay.from, leave.fullDay.to, leave.employee, totalApprovedDays);
+            }
+            break;
+          case "Leave Without Pay(LWP)":
+            await employee.incrementUnpaidLeaves(leave.fullDay.from, leave.fullDay.to, leave.employee, totalApprovedDays);
+            break;
+          default:
+            return res
+              .status(400)
+              .json({ message: "Invalid leave type for balance update" });
+        }
+        await employee.save();
+      }
+
+      if (status === "Rejected") {
+        leave.status.hod = "N/A";
+        leave.status.ceo = "N/A";
+        leave.status.admin = "N/A";
+
+        await Notification.create({
+          userId: leave.employee.employeeId,
+          message: `Your ${leave.leaveType} leave request was rejected by ${currentStage.toUpperCase()} with note: ${remarks || "No remarks provided"}`,
+        });
+        if (global._io) {
+          global._io
+            .to(leave.employee.employeeId)
+            .emit("notification", {
+              message: `Your ${leave.leaveType} leave request was rejected by ${currentStage.toUpperCase()} with note: ${remarks || "No remarks provided"}`,
+            });
+        }
+
+        if (leave.chargeGivenTo) {
+          const dateRangeStr = `from ${new Date(leave.fullDay.from).toISOString().split("T")[0]}${leave.fullDay.fromDuration === "half" ? ` (${leave.fullDay.fromSession})` : ""}${new Date(leave.fullDay.to) ? ` to ${new Date(leave.fullDay.to).toISOString().split("T")[0]}${leave.fullDay.toDuration === "half" ? ` (${leave.fullDay.toSession})` : ""}` : ""}`;
+          await Notification.create({
+            userId: leave.chargeGivenTo.employeeId,
+            message: `You are no longer assigned as Charge Given To for ${leave.name}'s leave ${dateRangeStr} due to rejection by ${currentStage.toUpperCase()}. You can now apply for non-Emergency leaves during this period.`,
+          });
+          if (global._io) {
+            global._io.to(leave.chargeGivenTo.employeeId).emit("notification", {
+              message: `You are no longer assigned as Charge Given To for ${leave.name}'s leave ${dateRangeStr} due to rejection by ${currentStage.toUpperCase()}. You can now apply for non-Emergency leaves.`,
+            });
+          }
+        }
+      }
+
       await leave.save();
-
       await Audit.create({
-        user: leave.employeeId,
-        action: "Upload Medical Certificate",
-        details: `Uploaded medical certificate for leave ${leave._id}`,
+        user: user.employeeId,
+        action: `${status} Leave`,
+        details: `${status} leave request for ${leave.name}${remarks ? ` with remarks: ${remarks}` : ""}`,
       });
 
-      res.json({ message: "Medical certificate uploaded successfully", leave });
+      const employee = await Employee.findById(leave.employee);
+      if (employee && status !== "Rejected") {
+        await Notification.create({
+          userId: employee.employeeId,
+          message: `Your leave request has been ${status.toLowerCase()} by ${currentStage.toUpperCase()}${remarks ? ` with note: ${remarks}` : ""}`,
+        });
+        if (global._io)
+          global._io
+            .to(employee.employeeId)
+            .emit("notification", {
+              message: `Your leave request has been ${status.toLowerCase()} by ${currentStage.toUpperCase()}${remarks ? ` with note: ${remarks}` : ""}`,
+            });
+      }
+
+      res.json(leave);
     } catch (err) {
-      console.error("Medical certificate upload error:", err.stack);
+      console.error("Leave approval error:", err.stack);
       res.status(500).json({ message: "Server error", error: err.message });
     }
   }
 );
 
-// Get Leaves
+function getAllDates(startDate, endDate) {
+  const dates = [];
+  let currentDate = new Date(startDate);
+  const end = new Date(endDate);
+  while (currentDate <= end) {
+    dates.push(new Date(currentDate));
+    currentDate.setDate(currentDate.getDate() + 1);
+  }
+  return dates;
+}
 router.get("/", auth, async (req, res) => {
   try {
     if (!gfsReady()) {
@@ -808,9 +1025,24 @@ router.get("/", auth, async (req, res) => {
             );
           }
         }
+
+        // Extract dates without time and handle duration conditionally
+        const approvedDates = leave.approvedDates.map(item => ({
+          ...item,
+          date: item.date.toISOString().split('T')[0],
+          duration: item.duration === "full" ? undefined : item.duration
+        }));
+        const rejectedDates = leave.rejectedDates.map(item => ({
+          ...item,
+          date: item.date.toISOString().split('T')[0],
+          duration: item.duration === "full" ? undefined : item.duration
+        }));
+
         return {
           ...leave.toObject(),
           medicalCertificate,
+          approvedDates,
+          rejectedDates
         };
       })
     );

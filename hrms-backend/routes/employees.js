@@ -743,14 +743,38 @@ router.put('/:id', auth, ensureGfs, ensureDbConnection, checkForFiles, async (re
   }
 });
 
-// Update employee shift (HOD and Admin only)
+router.get('/shift-allocations', auth, role(['Admin', 'HOD']), async (req, res) => {
+  console.log('Received request for /shift-allocations with query:', req.query); // Log the incoming request
+  try {
+    const filter = {};
+    if (req.query.departmentId) {
+      if (!mongoose.Types.ObjectId.isValid(req.query.departmentId)) {
+        console.log('Invalid department ID:', req.query.departmentId);
+        return res.status(400).json({ message: 'Invalid department ID format' });
+      }
+      filter.department = req.query.departmentId;
+      console.log('Applying department filter:', filter.department);
+    } else {
+      console.log('No departmentId provided, fetching all allocations');
+    }
+
+    const employees = await Employee.find(filter).select('employeeId name shift shiftEffectiveFrom shiftValidUpto');
+    console.log('Fetched employees count:', employees.length);
+    res.json(employees);
+  } catch (err) {
+    console.error('Error fetching shift allocations:', err);
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
+
+//error yha se aa rha hai:
 router.patch('/:id/shift', auth, role(['HOD', 'Admin']), async (req, res) => {
   try {
-    const { shift } = req.body;
+    const { shift, effectiveFrom, validUpto } = req.body;
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
       return res.status(400).json({ message: 'Invalid employee ID format' });
     }
-    if (!['Regular', 'B Shift', 'C Shift'].includes(shift)) {
+    if (!['General (09:00-17:30)', 'Shift A (06:00-14:30)', 'Shift B (14:00-22:30)','Shift C (22:00-06:30)'].includes(shift)) {
       return res.status(400).json({ message: 'Invalid shift type' });
     }
 
@@ -765,6 +789,10 @@ router.patch('/:id/shift', auth, role(['HOD', 'Admin']), async (req, res) => {
       if (!hod?.department?._id) {
         return res.status(400).json({ message: 'HOD department not found' });
       }
+      // Check if employee.department exists before calling toString()
+      if (!employee.department) {
+        return res.status(400).json({ message: 'Employee department not assigned' });
+      }
       if (employee.department.toString() !== hod.department._id.toString()) {
         return res.status(403).json({ message: 'Not authorized to update shift for employees outside your department' });
       }
@@ -773,16 +801,29 @@ router.patch('/:id/shift', auth, role(['HOD', 'Admin']), async (req, res) => {
       }
     }
 
+    // Validate dates
+    const effectiveDate = effectiveFrom ? new Date(effectiveFrom) : new Date();
+    if (isNaN(effectiveDate.getTime())) {
+      return res.status(400).json({ message: 'Invalid effectiveFrom date format' });
+    }
+    const validDate = validUpto ? new Date(validUpto) : null;
+    if (validUpto && (isNaN(validDate.getTime()) || validDate <= effectiveDate)) {
+      return res.status(400).json({ message: 'validUpto must be a future date after effectiveFrom' });
+    }
+
+    // Update shift and dates
     employee.shift = shift;
+    employee.shiftEffectiveFrom = effectiveDate;
+    employee.shiftValidUpto = validDate;
     const updatedEmployee = await employee.save();
     const populatedEmployee = await Employee.findById(employee._id).populate('department reportingManager');
-    console.log(`Shift updated for employee ${employee.employeeId} to ${shift}`);
+    console.log(`Shift updated for employee ${employee.employeeId} to ${shift} from ${effectiveDate} to ${validDate || 'ongoing'}`);
 
     try {
       await Audit.create({
         action: 'update_shift',
         user: req.user.id || 'unknown',
-        details: `Shift updated for employee ${employee.employeeId} to ${shift}`,
+        details: `Shift updated for employee ${employee.employeeId} to ${shift} from ${effectiveDate} to ${validDate || 'ongoing'}`,
       });
     } catch (auditErr) {
       console.warn('Audit logging for shift update failed:', auditErr.message);
@@ -794,6 +835,60 @@ router.patch('/:id/shift', auth, role(['HOD', 'Admin']), async (req, res) => {
     res.status(500).json({ message: 'Server error', error: err.message });
   }
 });
+
+// New GET route to fetch shift information
+router.get('/:id/shift', auth, role(['HOD', 'Admin', 'Employee']), async (req, res) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ message: 'Invalid employee ID format' });
+    }
+
+   const employee = await Employee.findById(req.params.id).select('shift shiftEffectiveFrom shiftValidUpto department');
+
+    if (!employee) {
+      return res.status(404).json({ message: 'Employee not found' });
+    }
+
+
+  if (req.user.role === 'HOD') {
+  const hod = await Employee.findById(req.user.id).populate('department');
+  
+  console.log('HOD dept:', hod?.department?._id?.toString());
+  console.log('EMP dept:', employee.department?.toString());
+  if (!hod) {
+    return res.status(403).json({ message: 'HOD not found' });
+  }
+
+  if (!hod.department || !hod.department._id) {
+    return res.status(400).json({ message: 'HOD department not found' });
+  }
+
+  if (!employee.department || employee.department.toString() !== hod.department._id.toString()) {
+    return res.status(403).json({ message: 'Not authorized to view shift for this employee' });
+  }
+}
+ else if (req.user.role === 'Employee' && req.user.id !== req.params.id) {
+      return res.status(403).json({ message: 'Not authorized to view another employee\'s shift' });
+    }
+
+    res.json({
+      shift: employee.shift,
+      effectiveFrom: employee.shiftEffectiveFrom,
+      validUpto: employee.shiftValidUpto
+    });
+  } catch (err) {
+    console.error('Error fetching employee shift:', err);
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+});
+
+
+
+// Ensure this comes after /shift-allocations
+router.get('/:id/shift', auth, role(['HOD', 'Admin', 'Employee']), async (req, res) => {
+  // ... existing code ...
+});
+
 
 // Delete employee (Admin only)
 router.delete('/:id', auth, role(['Admin']), ensureGfs, async (req, res) => {
