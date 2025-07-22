@@ -21,9 +21,6 @@ dotenv.config();
 const app = express();
 const server = http.createServer(app);
 
-app.get('/', (req, res) => {
-  res.send('HRMS Backend is running!');
-});
 
 const allowedOrigins = [
   'http://192.168.1.20:5001',
@@ -32,6 +29,13 @@ const allowedOrigins = [
   'http://192.168.59.225:5001',
   'https://hrms-rho-brown.vercel.app',
 ];
+
+app.get('/', (req, res) => {
+  res.send('HRMS Backend is running!');
+});
+app.get('/health', (req, res) => {
+  res.send('OK');
+});
 
 app.use(cors({
   origin: (origin, callback) => {
@@ -93,7 +97,7 @@ app.use('/api/holidays', holidaysRouter);
 mongoose.connect(process.env.MONGO_URI)
   .then(() => {
     console.log('MongoDB connected');
-    const PORT = process.env.PORT || 5000;
+    const PORT = process.env.PORT;
     server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 
     // GridFS and cron jobs can run asynchronously
@@ -122,8 +126,17 @@ mongoose.connect(process.env.MONGO_URI)
   })
   .catch(err => {
     console.error('MongoDB connection error:', err);
-    process.exit(1);
+
+ const PORT = process.env.PORT;
+    server.listen(PORT, () => console.log(`Server running on port ${PORT} with MongoDB error`));
   });
+
+  app.get('/', (req, res) => {
+  res.send('HRMS Backend is running!');
+});
+app.get('/health', (req, res) => {
+  res.send('OK');
+});
 
 // Socket.io events
 io.on('connection', socket => {
@@ -137,6 +150,13 @@ io.on('connection', socket => {
   } else {
     console.warn(`Socket ${socket.id} connected without employeeId`);
   }
+
+  app.get('/', (req, res) => {
+  res.send('HRMS Backend is running!');
+});
+app.get('/health', (req, res) => {
+  res.send('OK');
+});
 
   // Handle explicit 'join' event (for compatibility)
   socket.on('join', userId => {
