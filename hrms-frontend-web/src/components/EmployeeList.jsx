@@ -16,6 +16,9 @@ import Pagination from './Pagination';
 import toast from 'react-hot-toast';
 import { Loader2 } from 'lucide-react';
 import { Switch } from '../components/ui/switch'; // Assuming a Switch component is available or imported
+import * as XLSX from 'xlsx';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 function EmployeeList() {
   console.log('EmployeeList component rendered');
@@ -41,6 +44,8 @@ function EmployeeList() {
   const [shiftLoading, setShiftLoading] = useState({});
   const [tempShift, setTempShift] = useState({});
   const [emergencyLoading, setEmergencyLoading] = useState({}); // Track loading state for emergency toggle
+  const departmentOrder = ['Admin', 'R&D', 'Production', 'AMETL'];
+
 
 useEffect(() => {
   const fetchData = async () => {
@@ -121,6 +126,48 @@ useEffect(() => {
   fetchData();
 }, [navigate, departmentFilter, user]);
 
+const isCEO = user?.loginType === 'CEO';
+
+const sortEmployeesForCEO = (list) => {
+  return [...list].sort((a, b) => {
+    const deptA = a.department?.name || '';
+    const deptB = b.department?.name || '';
+    const indexA = departmentOrder.indexOf(deptA);
+    const indexB = departmentOrder.indexOf(deptB);
+    return (indexA !== -1 ? indexA : Infinity) - (indexB !== -1 ? indexB : Infinity);
+  });
+};
+
+
+const handleDownloadPDF = (data) => {
+  if (!data || data.length === 0) {
+    toast.error('No employees to export.');
+    return;
+  }
+
+  const finalList = isCEO ? sortEmployeesForCEO(data) : data;
+
+  const doc = new jsPDF();
+  doc.setFontSize(16);
+  doc.text('Employee List (Department-wise)', 14, 20);
+
+  const tableData = finalList.map(emp => [
+    emp.employeeId,
+    emp.name,
+    emp.department?.name || 'N/A',
+  ]);
+
+  autoTable(doc, {
+    startY: 30,
+    head: [['Employee ID', 'Name', 'Department']],
+    body: tableData,
+    theme: 'striped',
+    styles: { fontSize: 11 },
+  });
+
+  doc.save('employee_list.pdf');
+};
+
 
 
   const filteredEmployees = useMemo(() => {
@@ -158,6 +205,28 @@ useEffect(() => {
     (currentPage - 1) * itemsPerPage,
     currentPage * itemsPerPage
   );
+
+const handleDownloadXLSX = (data) => {
+  if (!data || data.length === 0) {
+    toast.error('No employees to export.');
+    return;
+  }
+
+  const finalList = isCEO ? sortEmployeesForCEO(data) : data;
+
+  const worksheetData = finalList.map(emp => ({
+    'Employee ID': emp.employeeId,
+    'Name': emp.name,
+    'Department': emp.department?.name || 'N/A',
+  }));
+
+  const worksheet = XLSX.utils.json_to_sheet(worksheetData);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Employees');
+
+  XLSX.writeFile(workbook, 'employee_list.xlsx');
+};
+
 
   const TableCellComponent = ({ emp }) => {
     if (!canShowEmergencyToggle(emp)) return null;
@@ -431,6 +500,22 @@ const canShowEmergencyToggle = (employee) => {
                 </Select>
               )}
             </div>
+            <div className="flex gap-3 mt-6">
+  <Button
+    className="bg-gray-100 hover:bg-gray-200 text-black"
+    onClick={() => handleDownloadXLSX(filteredEmployees)}
+  >
+    📊 Download XLSX
+  </Button>
+
+  <Button
+    className="bg-gray-100 hover:bg-gray-200 text-black"
+    onClick={() => handleDownloadPDF(filteredEmployees)}
+  >
+    📝 Download PDF
+  </Button>
+</div>
+
           </motion.div>
           {filteredEmployees.length === 0 ? (
             <div className="text-center py-8 bg-gray-100 rounded-lg">

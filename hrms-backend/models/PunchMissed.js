@@ -14,6 +14,13 @@ const punchMissedSchema = new mongoose.Schema({
     admin: { type: String, enum: ['Pending', 'Approved'], default: 'Pending' },
     ceo: { type: String, enum: ['Pending', 'Approved'], default: 'Pending' },
   },
+    statusHistory: [{
+    stage: { type: String, enum: ['hod', 'admin', 'ceo'], required: true },
+    status: { type: String, enum: ['Pending', 'Approved', 'Rejected', 'Submitted', 'N/A'], required: true },
+    reason: { type: String, default: '' },
+    changedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee', required: true },
+    changedAt: { type: Date, default: Date.now }
+  }],
 }, { timestamps: true });
 
 export default mongoose.model('PunchMissed', punchMissedSchema);

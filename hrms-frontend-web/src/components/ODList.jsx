@@ -34,6 +34,7 @@ import {
 import { Label } from "../components/ui/label";
 import { Input } from "../components/ui/input";
 import { Textarea } from "../components/ui/textarea";
+import { useNavigate } from "react-router-dom";
 import Pagination from "./Pagination";
 import api from "../services/api";
 import ContentLayout from "./ContentLayout";
@@ -41,10 +42,11 @@ import { AuthContext } from "../context/AuthContext";
 
 function ODList() {
   const { user } = useContext(AuthContext);
+  const navigate = useNavigate();
   const initialFilters = useMemo(
     () => ({
       employeeId: user?.loginType === "Employee" ? user?.employeeId || "" : "",
-      name: "",
+      name: user?.loginType === "Employee" ? user?.name || "" : "",
       departmentId:
         user?.loginType === "HOD" && user?.department
           ? user.department._id
@@ -71,6 +73,7 @@ function ODList() {
   const [showApprovalModal, setShowApprovalModal] = useState(null);
   const [approvalReason, setApprovalReason] = useState("");
   const [unlockStatus, setUnlockStatus] = useState({});
+  const [showGuidelinesModal, setShowGuidelinesModal] = useState(false);
 
   const fetchODs = useCallback(
     async (filterParams) => {
@@ -154,38 +157,51 @@ function ODList() {
     }
   }, []);
 
-  const fetchEmployees = useCallback(async () => {
+  const fetchEmployees = useCallback(async (departmentId = null) => {
     try {
-      const res = await api.get("/employees");
-      setEmployees(res.data);
+      let res;
+      if (user?.loginType === "HOD" && departmentId && departmentId !== "all") {
+        res = await api.get(`/employees/by-department/${departmentId}`);
+      } else {
+        const params = departmentId && departmentId !== "all" ? { departmentId } : {};
+        res = await api.get("/employees", { params });
+      }
+      const filtered = res.data.filter(emp => emp.employeeId !== user?.employeeId);
+      setEmployees(filtered);
     } catch (err) {
       console.error("Error fetching employees:", err);
       setError("Failed to load employees");
     }
-  }, []);
+  }, [user?.loginType]);
 
   useEffect(() => {
     if (!user) return;
+    let newFilters = { ...initialFilters };
+    let departmentIdForEmployees = null;
+
     if (user?.loginType === "HOD" && user?.department) {
       setDepartments([{ _id: user.department._id, name: user.department.name }]);
-      const hodFilters = {
+      newFilters = {
         ...initialFilters,
         departmentId: viewMode === "approval" ? user.department._id : "all",
         employeeId: viewMode === "own" ? user.employeeId : "",
+        name: viewMode === "own" ? user.name : "",
       };
-      setFilters(hodFilters);
-      setTempFilters(hodFilters);
-      fetchODs(hodFilters);
-      fetchEmployees();
+      departmentIdForEmployees = viewMode === "own" ? null : user.department._id;
+      setFilters(newFilters);
+      setTempFilters(newFilters);
+      fetchODs(newFilters);
+      fetchEmployees(departmentIdForEmployees);
     } else if (user?.loginType === "Employee") {
-      const empFilters = {
+      newFilters = {
         ...initialFilters,
         employeeId: user?.employeeId || "",
+        name: user?.name || "",
       };
-      setFilters(empFilters);
-      setTempFilters(empFilters);
-      fetchODs(empFilters);
-    } else if (user) {
+      setFilters(newFilters);
+      setTempFilters(newFilters);
+      fetchODs(newFilters);
+    } else {
       fetchDepartments();
       fetchEmployees();
       setFilters(initialFilters);
@@ -199,7 +215,16 @@ function ODList() {
   }, [currentPage, itemsPerPage, fetchODs]);
 
   const handleChange = (name, value) => {
-    setTempFilters({ ...tempFilters, [name]: value });
+    setTempFilters((prev) => {
+      const newFilters = { ...prev, [name]: value };
+      if (name === "employeeId" && value === "all") {
+        newFilters.name = "";
+      } else if (name === "employeeId") {
+        const selectedEmployee = employees.find(emp => emp.employeeId === value);
+        newFilters.name = selectedEmployee?.name || "";
+      }
+      return newFilters;
+    });
   };
 
   const handleFilter = () => {
@@ -208,57 +233,57 @@ function ODList() {
     fetchODs(tempFilters);
   };
 
- const handleApproval = async (id, status, currentStage, reason = "") => {
-  try {
-    const odToUpdate = odRecords.find((record) => record._id === id);
-    const isWithin30Days =
-      new Date(odToUpdate.dateOut) >=
-      new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-    if (!isWithin30Days && odToUpdate.status[currentStage] !== "Pending") {
-      alert("Cannot change status after 30 days.");
-      return;
-    }
-
-    const odData = { 
-      status, 
-      reason: status === "Rejected" || unlockStatus[id] ? (reason.trim() || "No reason provided") : reason 
-    };
-    await api.put(`/od/${id}/approve`, odData);
-
-    const updatedODs = odRecords.map((record) => {
-      if (record._id === id) {
-        let newStatus = { ...record.status };
-        if (status === "Rejected") {
-          newStatus.hod = currentStage === "hod" ? "Rejected" : newStatus.hod;
-          newStatus.ceo = currentStage === "hod" || currentStage === "ceo" ? "N/A" : newStatus.ceo;
-          newStatus.admin = currentStage === "hod" || currentStage === "ceo" || currentStage === "admin" ? "N/A" : newStatus.admin;
-        } else {
-          newStatus[currentStage] = status;
-          if (status === "Approved" && currentStage === "hod") {
-            newStatus.ceo = "Pending";
-            newStatus.admin = "Pending";
-          } else if (["Approved", "Submitted"].includes(status) && currentStage === "ceo") {
-            newStatus.admin = "Pending";
-          }
-        }
-        return { ...record, status: newStatus };
+  const handleApproval = async (id, status, currentStage, reason = "") => {
+    try {
+      const odToUpdate = odRecords.find((record) => record._id === id);
+      const isWithin30Days =
+        new Date(odToUpdate.dateOut) >=
+        new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+      if (!isWithin30Days && odToUpdate.status[currentStage] !== "Pending") {
+        alert("Cannot change status after 30 days.");
+        return;
       }
-      return record;
-    });
-    setOdRecords(updatedODs);
-    setUnlockStatus((prev) => ({ ...prev, [id]: false }));
-    alert(`OD ${status.toLowerCase()} successfully.`);
 
-    await api.post("/notifications", {
-      userId: odToUpdate.employeeId,
-      adminId: "admin-user-id",
-      message: `OD status for ${odToUpdate.name} has been updated to ${status} by ${user.loginType}. Reason: ${reason || "No reason provided"}`,
-    });
-  } catch (err) {
-    console.error("Approval error:", err);
-   // alert(`Failed to update OD status: ${err.response?.data?.message || err.message}`);
-  }
-};
+      const odData = { 
+        status, 
+        reason: status === "Rejected" || unlockStatus[id] ? (reason.trim() || "No reason provided") : reason 
+      };
+      await api.put(`/od/${id}/approve`, odData);
+
+      const updatedODs = odRecords.map((record) => {
+        if (record._id === id) {
+          let newStatus = { ...record.status };
+          if (status === "Rejected") {
+            newStatus.hod = currentStage === "hod" ? "Rejected" : newStatus.hod;
+            newStatus.ceo = currentStage === "hod" || currentStage === "ceo" ? "N/A" : newStatus.ceo;
+            newStatus.admin = currentStage === "hod" || currentStage === "ceo" || currentStage === "admin" ? "N/A" : newStatus.admin;
+          } else {
+            newStatus[currentStage] = status;
+            if (status === "Approved" && currentStage === "hod") {
+              newStatus.ceo = "Pending";
+              newStatus.admin = "Pending";
+            } else if (["Approved", "Submitted"].includes(status) && currentStage === "ceo") {
+              newStatus.admin = "Pending";
+            }
+          }
+          return { ...record, status: newStatus };
+        }
+        return record;
+      });
+      setOdRecords(updatedODs);
+      setUnlockStatus((prev) => ({ ...prev, [id]: false }));
+      alert(`OD ${status.toLowerCase()} successfully.`);
+
+      await api.post("/notifications", {
+        userId: odToUpdate.employeeId,
+        adminId: "admin-user-id",
+        message: `OD status for ${odToUpdate.name} has been updated to ${status} by ${user.loginType}. Reason: ${reason || "No reason provided"}`,
+      });
+    } catch (err) {
+      console.error("Approval error:", err);
+      alert(`Failed to update OD status: ${err.response?.data?.message || err.message}`);
+    }
+  };
 
   const handleUnlock = (id) => {
     setUnlockStatus((prev) => ({ ...prev, [id]: true }));
@@ -281,6 +306,25 @@ function ODList() {
     return odRecords;
   }, [odRecords, user, viewMode]);
 
+  const filteredEmployees = useMemo(() => {
+    let result = employees;
+    if (tempFilters.departmentId && tempFilters.departmentId !== "all") {
+      result = result.filter((emp) => {
+        const deptId = typeof emp.department === "object" ? emp.department._id : emp.department;
+        return deptId === tempFilters.departmentId;
+      });
+    }
+    return result;
+  }, [employees, tempFilters.departmentId]);
+
+  const isExtendODAllowed = (od) => {
+    const dateOut = new Date(od.dateOut);
+    const dateIn = new Date(od.dateIn);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0); // Normalize to start of day
+    return dateOut.toDateString() !== dateIn.toDateString() && dateIn >= today;
+  };
+
   return (
     <ContentLayout title="OD List">
       <Card className="w-full mx-auto shadow-lg border">
@@ -297,20 +341,16 @@ function ODList() {
                 className={`px-4 py-2 rounded-lg ${
                   viewMode === "approval"
                     ? "bg-blue-600 text-white"
-                    : "bg-gray-700 !text-white-700"
-                } hover:bg-blue-600 transition-colors`}
+                    : "bg-gray-200 text-gray-700"
+                } hover:bg-blue-600 hover:text-white transition-colors`}
               >
                 Approval Requests
               </Button>
               <Button
-                onClick={() => setViewMode("own")}
-                className={`px-4 py-2 rounded-lg ${
-                  viewMode === "own"
-                    ? "bg-blue-600 text-white"
-                    : "bg-gray-700 !text-white-700"
-                } hover:bg-gray-700 transition-colors`}
+                onClick={() => setShowGuidelinesModal(true)}
+                className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 hover:text-white transition-colors"
               >
-                My OD Requests
+                Module Usage
               </Button>
             </div>
           )}
@@ -321,47 +361,107 @@ function ODList() {
             className="mb-6 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4"
           >
             {user?.loginType === "HOD" ? (
-              <div className="flex-1 min-w-[200px] relative">
-                <Label htmlFor="employeeName" className="text-sm font-medium">
-                  Employee Name or ID
-                </Label>
-                <Select
-                  onValueChange={(value) => {
-                    const selectedEmployee = employees.find(
-                      (emp) => emp.employeeId === value
-                    );
-                    handleChange("name", selectedEmployee?.name || "");
-                    handleChange("employeeId", value);
-                  }}
-                  value={tempFilters.employeeId}
-                  disabled={viewMode === "own"}
-                >
-                  <SelectTrigger className="border px-3 py-2 rounded-md w-full">
-                    <SelectValue placeholder="Select Employee Name" />
-                  </SelectTrigger>
-                  <SelectContent className="z-50 max-h-60 overflow-y-auto">
-                    <SelectItem value="all">All Employees</SelectItem>
-                    {employees.map((emp) => (
-                      <SelectItem key={emp._id} value={emp.employeeId}>
-                        {emp.name} ({emp.employeeId})
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+              viewMode === "own" ? (
+                <>
+                  <div className="flex-1 min-w-[200px]">
+                    <Label htmlFor="employeeName" className="text-sm font-medium">
+                      Employee Name
+                    </Label>
+                    <Input
+                      id="employeeName"
+                      value={user?.name || "Unknown"}
+                      readOnly
+                      className="mt-1 border-gray-300 bg-gray-100 cursor-not-allowed"
+                      placeholder="Your Name"
+                    />
+                  </div>
+                  <div className="flex-1 min-w-[200px]">
+                    <Label htmlFor="employeeId" className="text-sm font-medium">
+                      Employee ID
+                    </Label>
+                    <Input
+                      id="employeeId"
+                      value={user?.employeeId || "Unknown"}
+                      readOnly
+                      className="mt-1 border-gray-300 bg-gray-100 cursor-not-allowed"
+                      placeholder="Your Employee ID"
+                    />
+                  </div>
+                  <div className="flex-1 min-w-[200px]">
+                    <Label htmlFor="departmentId" className="text-sm font-medium">
+                      Department
+                    </Label>
+                    <Input
+                      id="departmentId"
+                      value={hodDepartmentName}
+                      readOnly
+                      className="mt-1 border-gray-300 bg-gray-100 cursor-not-allowed"
+                      placeholder="Your Department"
+                    />
+                  </div>
+                </>
+              ) : (
+                <div className="flex-1 min-w-[200px] relative">
+                  <Label htmlFor="employeeName" className="text-sm font-medium">
+                    Employee Name or ID
+                  </Label>
+                  <Select
+                    onValueChange={(value) => {
+                      const selectedEmployee = employees.find(
+                        (emp) => emp.employeeId === value
+                      );
+                      handleChange("name", selectedEmployee?.name || "");
+                      handleChange("employeeId", value);
+                      fetchODs({
+                        ...tempFilters,
+                        name: selectedEmployee?.name || "",
+                        employeeId: value,
+                      });
+                    }}
+                    value={tempFilters.employeeId || ""}
+                    disabled={viewMode === "own"}
+                  >
+                    <SelectTrigger className="border px-3 py-2 rounded-md w-full">
+                      <SelectValue placeholder="Select Employee Name" />
+                    </SelectTrigger>
+                    <SelectContent className="z-50 max-h-60 overflow-y-auto">
+                      <SelectItem value="all">All Employees</SelectItem>
+                      {filteredEmployees.map((emp) => (
+                        <SelectItem key={emp._id} value={emp.employeeId}>
+                          {emp.name} ({emp.employeeId})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )
             ) : user?.loginType === "Employee" ? (
-              <div className="flex-1 min-w-[200px]">
-                <Label htmlFor="employeeId">Employee ID</Label>
-                <Input
-                  id="employeeId"
-                  name="employeeId"
-                  value={tempFilters.employeeId}
-                  onChange={(e) => handleChange("employeeId", e.target.value)}
-                  placeholder="Employee ID"
-                  disabled
-                  className="mt-1 border-gray-300 bg-gray-100 cursor-not-allowed"
-                />
-              </div>
+              <>
+                <div className="flex-1 min-w-[200px]">
+                  <Label htmlFor="employeeName" className="text-sm font-medium">
+                    Employee Name
+                  </Label>
+                  <Input
+                    id="employeeName"
+                    value={user?.name || "Unknown"}
+                    readOnly
+                    className="mt-1 border-gray-300 bg-gray-100 cursor-not-allowed"
+                    placeholder="Your Name"
+                  />
+                </div>
+                <div className="flex-1 min-w-[200px]">
+                  <Label htmlFor="employeeId" className="text-sm font-medium">
+                    Employee ID
+                  </Label>
+                  <Input
+                    id="employeeId"
+                    value={tempFilters.employeeId}
+                    readOnly
+                    className="mt-1 border-gray-300 bg-gray-100 cursor-not-allowed"
+                    placeholder="Employee ID"
+                  />
+                </div>
+              </>
             ) : (
               <div className="flex-1 min-w-[200px] relative">
                 <Label htmlFor="employeeName" className="text-sm font-medium">
@@ -374,15 +474,20 @@ function ODList() {
                     );
                     handleChange("name", selectedEmployee?.name || "");
                     handleChange("employeeId", value);
+                    fetchODs({
+                      ...tempFilters,
+                      name: selectedEmployee?.name || "",
+                      employeeId: value,
+                    });
                   }}
-                  value={tempFilters.employeeId}
+                  value={tempFilters.employeeId || ""}
                 >
                   <SelectTrigger className="border px-3 py-2 rounded-md w-full">
                     <SelectValue placeholder="Select Employee Name" />
                   </SelectTrigger>
                   <SelectContent className="z-50 max-h-60 overflow-y-auto">
                     <SelectItem value="all">All Employees</SelectItem>
-                    {employees.map((emp) => (
+                    {filteredEmployees.map((emp) => (
                       <SelectItem key={emp._id} value={emp.employeeId}>
                         {emp.name} ({emp.employeeId})
                       </SelectItem>
@@ -411,7 +516,10 @@ function ODList() {
                 />
               ) : (
                 <Select
-                  onValueChange={(value) => handleChange("departmentId", value)}
+                  onValueChange={(value) => {
+                    handleChange("departmentId", value);
+                    fetchEmployees(value);
+                  }}
                   value={tempFilters.departmentId}
                   disabled={loading}
                 >
@@ -506,6 +614,9 @@ function ODList() {
                     viewMode !== "own" && (
                       <TableHead className="font-semibold">Action</TableHead>
                     )}
+                  {user?.loginType === "Employee" && (
+                    <TableHead className="font-semibold">Extend OD</TableHead>
+                  )}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -513,8 +624,10 @@ function ODList() {
                   <TableRow>
                     <TableCell
                       colSpan={
-                        ["HOD", "Admin", "CEO"].includes(user?.loginType) &&
-                        viewMode !== "own"
+                        user?.loginType === "Employee"
+                          ? 11
+                          : ["HOD", "Admin", "CEO"].includes(user?.loginType) &&
+                            viewMode !== "own"
                           ? 11
                           : 10
                       }
@@ -527,8 +640,10 @@ function ODList() {
                   <TableRow>
                     <TableCell
                       colSpan={
-                        ["HOD", "Admin", "CEO"].includes(user?.loginType) &&
-                        viewMode !== "own"
+                        user?.loginType === "Employee"
+                          ? 11
+                          : ["HOD", "Admin", "CEO"].includes(user?.loginType) &&
+                            viewMode !== "own"
                           ? 11
                           : 10
                       }
@@ -740,6 +855,19 @@ function ODList() {
                               ) : null}
                             </TableCell>
                           )}
+                        {user?.loginType === "Employee" && (
+                          <TableCell>
+                            <Button
+                              size="sm"
+                              onClick={() => navigate("/employee/od", { state: { od: od } })}
+                              className="bg-red-600 text-white hover:bg-red-700"
+                              disabled={!isExtendODAllowed(od)}
+                              aria-label={`Extend OD for ${od.name}`}
+                            >
+                              Extend OD
+                            </Button>
+                          </TableCell>
+                        )}
                       </TableRow>
                     );
                   })
@@ -756,6 +884,41 @@ function ODList() {
                 setCurrentPage(1);
               }}
             />
+            <Dialog
+              open={showGuidelinesModal}
+              onOpenChange={() => setShowGuidelinesModal(false)}
+            >
+              <DialogContent className="max-w-lg max-h-[530px] p-6 bg-white shadow-lg rounded-lg border border-gray-200">
+                <DialogHeader>
+                  <DialogTitle className="text-2xl font-bold text-red-800">
+                    OD Approval Guidelines
+                  </DialogTitle>
+                  <DialogDescription className="text-gray-600">
+                    Guidelines for Heads of Department (HODs) on managing OD requests.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4 mt-4">
+                  
+                  <ul className="list-disc pl-5 space-y-2 text-sm text-gray-700">
+                    <li>
+                      <strong className="text-base  text-blue-800"> Review OD Details:</strong> The details provided in the OD request, accessible via the "View Details" button, include the purpose, place/unit of visit, and requested dates/times. Verify these details for accuracy and relevance to the employee's duties.
+                    </li>
+                    <li>
+                      <strong  className="text-base  text-blue-800">Cross-Check Punch Details:</strong> Use the "Punch Details" button to review the actual punch-in and punch-out times recorded for the OD. These should align with the submitted OD details to confirm the employee's activities during the OD period.
+                    </li>
+                    <li>
+                      <strong className="text-base  text-blue-800">Re-evaluate Decisions:</strong> <span className=" text-red-800"> 30 Days Window</span> is provided for re-evaluation, i.e. you can unlock a previously approved or rejected OD using the "Unlock" button. This allows you to revisit your decision if new information (e.g., punch time discrepancies) suggests misuse. Upon unlocking, you can either:
+                      <ul className="list-circle pl-5 mt-1">
+                        <li><strong className="text-base  text-blue-800">Grant Approval:</strong> Re-approve the Rejected OD Request with an optional reason.</li>
+                        <li><strong className="text-base  text-blue-800"> Dismiss Approval:</strong> Reject the Approved OD Request, providing a mandatory reason for the change.</li>
+                      </ul>
+                    </li>
+                    
+                  </ul>
+                </div>
+          
+              </DialogContent>
+            </Dialog>
             <Dialog
               open={!!selectedOD}
               onOpenChange={() => setSelectedOD(null)}
@@ -856,73 +1019,73 @@ function ODList() {
                 )}
               </DialogContent>
             </Dialog>
-       <Dialog
-  open={!!showApprovalModal}
-  onOpenChange={() => {
-    setShowApprovalModal(null);
-    setApprovalReason("");
-  }}
->
-  <DialogContent className="max-w-md p-4 bg-white shadow-lg rounded-lg border border-gray-200">
-    <DialogHeader>
-      <DialogTitle className="text-lg font-semibold">
-        {showApprovalModal?.action === "approve" || showApprovalModal?.action === "acknowledge"
-          ? showApprovalModal.action === "acknowledge" ? "Acknowledge OD" : "Approve OD"
-          : "Reject OD"}
-      </DialogTitle>
-      <DialogDescription>
-        {showApprovalModal?.action === "approve" || showApprovalModal?.action === "acknowledge"
-          ? "Optionally provide a reason for approving this OD request."
-          : "Please provide a reason for rejecting this OD request."}
-      </DialogDescription>
-    </DialogHeader>
-    <div className="space-y-4 mt-4">
-      <div>
-        <Label htmlFor="reason">Reason {showApprovalModal?.action === "approve" || showApprovalModal?.action === "acknowledge" ? "(Optional)" : "(Required)"}</Label>
-        <Textarea
-          id="reason"
-          value={approvalReason}
-          onChange={(e) => setApprovalReason(e.target.value)}
-          placeholder={showApprovalModal?.action === "approve" || showApprovalModal?.action === "acknowledge"
-            ? "Enter reason (optional)"
-            : "Enter reason (required)"}
-          className="mt-1 border-gray-300 focus:ring-blue-500 focus:border-blue-500"
-        />
-      </div>
-      <div className="flex gap-2 justify-end">
-        <Button
-          variant="outline"
-          onClick={() => {
-            setShowApprovalModal(null);
-            setApprovalReason("");
-          }}
-          className="border-gray-300"
-        >
-          Cancel
-        </Button>
-        <Button
-          onClick={() => {
-            const odRecord = odRecords.find((record) => record._id === showApprovalModal?.id);
-            const status = showApprovalModal.action === "acknowledge" ? "Acknowledged" : 
-                          showApprovalModal.action === "approve" ? "Approved" : "Rejected";
-            handleApproval(
-              showApprovalModal.id,
-              status,
-              showApprovalModal.stage,
-              approvalReason
-            );
-            setShowApprovalModal(null);
-            setApprovalReason("");
-          }}
-          className="bg-blue-600 text-white hover:bg-blue-700"
-          disabled={(showApprovalModal?.action === "reject" || unlockStatus[showApprovalModal?.id]) && !approvalReason.trim()}
-        >
-          Save
-        </Button>
-      </div>
-    </div>
-  </DialogContent>
-</Dialog>
+            <Dialog
+              open={!!showApprovalModal}
+              onOpenChange={() => {
+                setShowApprovalModal(null);
+                setApprovalReason("");
+              }}
+            >
+              <DialogContent className="max-w-md p-4 bg-white shadow-lg rounded-lg border border-gray-200">
+                <DialogHeader>
+                  <DialogTitle className="text-lg font-semibold">
+                    {showApprovalModal?.action === "approve" || showApprovalModal?.action === "acknowledge"
+                      ? showApprovalModal.action === "acknowledge" ? "Acknowledge OD" : "Approve OD"
+                      : "Reject OD"}
+                  </DialogTitle>
+                  <DialogDescription>
+                    {showApprovalModal?.action === "approve" || showApprovalModal?.action === "acknowledge"
+                      ? "Optionally provide a reason for approving this OD request."
+                      : "Please provide a reason for rejecting this OD request."}
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4 mt-4">
+                  <div>
+                    <Label htmlFor="reason">Reason {showApprovalModal?.action === "approve" || showApprovalModal?.action === "acknowledge" ? "(Optional)" : "(Required)"}</Label>
+                    <Textarea
+                      id="reason"
+                      value={approvalReason}
+                      onChange={(e) => setApprovalReason(e.target.value)}
+                      placeholder={showApprovalModal?.action === "approve" || showApprovalModal?.action === "acknowledge"
+                        ? "Enter reason (optional)"
+                        : "Enter reason (required)"}
+                      className="mt-1 border-gray-300 focus:ring-blue-500 focus:border-blue-500"
+                    />
+                  </div>
+                  <div className="flex gap-2 justify-end">
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setShowApprovalModal(null);
+                        setApprovalReason("");
+                      }}
+                      className="border-gray-300"
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      onClick={() => {
+                        const odRecord = odRecords.find((record) => record._id === showApprovalModal?.id);
+                        const status = showApprovalModal.action === "acknowledge" ? "Acknowledged" : 
+                                      showApprovalModal.action === "approve" ? "Approved" : "Rejected";
+                        handleApproval(
+                          showApprovalModal.id,
+                          status,
+                          showApprovalModal.stage,
+                          approvalReason
+                        );
+                        setShowApprovalModal(null);
+                        setApprovalReason("");
+                      }}
+                      className="bg-blue-600 text-white hover:bg-blue-700"
+                      disabled={(showApprovalModal?.action === "reject" || unlockStatus[showApprovalModal?.id]) && !approvalReason.trim()}
+                    >
+                      Save
+                    </Button>
+                  </div>
+                </div>
+              </DialogContent>
+            </Dialog>
           </div>
         </CardContent>
       </Card>

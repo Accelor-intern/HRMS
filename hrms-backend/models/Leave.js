@@ -26,9 +26,9 @@ const leaveSchema = new mongoose.Schema({
     from: { type: Date, required: true },
     to: { type: Date },
     fromDuration: { type: String, enum: ['full', 'half', 'forenoon', 'afternoon'], default: 'full' },
-    fromSession: { type: String, enum: ['forenoon', 'afternoon'] },
+    fromSession: { type: String, enum: ['forenoon', 'afternoon', ''] },
     toDuration: { type: String, enum: ['full', 'half', 'forenoon', 'afternoon'] },
-    toSession: { type: String, enum: ['forenoon', 'afternoon'] }
+    toSession: { type: String, enum: ['forenoon', 'afternoon', ''] }
   },
 
   reason: { type: String, required: true },

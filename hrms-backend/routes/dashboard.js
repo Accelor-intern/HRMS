@@ -12,6 +12,16 @@ import role from '../middleware/role.js';
 import { buildAttendanceData } from '../utils/attendanceUtils.js';
 const router = express.Router();
 
+const quotes = [
+  'Fall in love with the process ❤️‍🔥✨',
+  'Keep pushing forward 🚀💼',
+  'Embrace the journey 🌄🛤️',
+  'Stay focused, stay strong 🎯💪',
+  'Believe in Yourself 💡✨',
+  'Trust the Process 🌱🙌',
+  'This too shall pass ⏳🕊️',
+];
+
 // Get dashboard statistics
 router.get('/stats', auth, role(['Admin', 'CEO', 'HOD']), async (req, res) => {
   try {

@@ -79,15 +79,16 @@ function Attendance() {
     }
   }, []);
 
-  const formatDateDisplay = (dateStr) => {
-    const dateUTC = new Date(dateStr);
-    const dateIST = new Date(dateUTC.getTime() + 5.5 * 60 * 60 * 1000);
-    return dateIST.toLocaleDateString("en-GB", {
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-    });
-  };
+const formatDateDisplay = (dateStr) => {
+  const dateUTC = new Date(dateStr);
+  dateUTC.setDate(dateUTC.getDate() + 1); // Add one day to correct DB offset
+  const dateIST = new Date(dateUTC.getTime() + 5.5 * 60 * 60 * 1000); // Convert to IST
+  return dateIST.toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
+};
 
   const fetchAttendance = useCallback(async (filterParams) => {
     setLoading(true);
@@ -332,28 +333,28 @@ useEffect(() => {
     );
   };
 
-  const isLateArrivalEligible = (timeIn, logDate) => {
-    if (!timeIn || !logDate) return false;
-    const [hours, mins] = timeIn.split(":").map(Number);
-    const totalMins = hours * 60 + mins;
-    const currentDate = new Date();
-    const recordDate = new Date(logDate);
-    const currentTimeIST = new Date(currentDate.getTime() + 5.5 * 60 * 60 * 1000);
-    const currentHours = currentTimeIST.getHours();
-    const currentMins = currentTimeIST.getMinutes();
-    const currentTotalMins = currentHours * 60 + currentMins;
-    const startWindow = 9 * 60 + 20; // 09:20 IST
-    const endWindow = 17 * 60 + 30; // 17:30 IST
-    const isSameDay = currentDate.toDateString() === recordDate.toDateString();
-    
-    return (
-      isSameDay &&
-      currentTotalMins >= startWindow &&
-      currentTotalMins <= endWindow &&
-      totalMins >= 540 && // 09:00
-      totalMins <= 555 // 09:15
-    );
-  };
+const isLateArrivalEligible = (timeIn, logDate) => {
+  if (!timeIn || !logDate) return false;
+
+  const [hours, mins] = timeIn.split(":").map(Number);
+  const totalMins = hours * 60 + mins;
+
+  const now = new Date();
+  const currentIST = new Date(now.getTime() + 5.5 * 60 * 60 * 1000);
+  const logDateObj = new Date(logDate);
+  logDateObj.setDate(logDateObj.getDate() + 1); // Correct DB offset to IST
+
+  const isSameDay =
+    currentIST.toISOString().split("T")[0] ===
+    logDateObj.toISOString().split("T")[0];
+
+  return (
+    isSameDay &&
+    totalMins >= 540 && totalMins <= 555 // 09:00–09:15
+  );
+};
+
+
   const handleApologizeClick = (record) => {
     const employeeApologyCount = apologyCounts[record.employeeId]?.count || 0;
     if (employeeApologyCount >= 3) {
@@ -652,7 +653,7 @@ useEffect(() => {
 )}
 
 </div>
-
+<br></br>
   <div className="flex-1 min-w-[200px]">
     <Label htmlFor="status">Status</Label>
     {user?.loginType === "Employee" ? (
@@ -670,7 +671,7 @@ useEffect(() => {
         <SelectContent className="z-50">
           {availableStatuses.map((status) => (
             <SelectItem key={status} value={status}>
-              {status === "all" ? "All Statuses" : status}
+              {status === "all" ? "All Status" : status}
             </SelectItem>
           ))}
         </SelectContent>
@@ -688,7 +689,7 @@ useEffect(() => {
           <SelectValue placeholder="All Statuses" />
         </SelectTrigger>
         <SelectContent className="z-50">
-          <SelectItem value="all">All Statuses</SelectItem>
+          <SelectItem value="all">All Status</SelectItem>
           <SelectItem value="Present">Present</SelectItem>
           <SelectItem value="Absent">Absent</SelectItem>
           <SelectItem value="Late Arrival">Late Arrival</SelectItem>
@@ -838,17 +839,24 @@ useEffect(() => {
                             </Button>
                           </TableCell>
                         )}
-                        {["Employee", "HOD"].includes(user?.loginType) && a.employeeId === user.employeeId && isLateArrivalEligible(a.timeIn, a.logDate) && !(/Approval Pending|Allowed|Denied/.test(a.status)) && (
-                          <TableCell>
-                            <Button
-                              onClick={() => handleApologizeClick(a)}
-                              className="bg-yellow-500 hover:bg-yellow-600 text-white"
-                              disabled={(apologyCounts[a.employeeId]?.count || 0) >= 3}
-                            >
-                              Apologize
-                            </Button>
-                          </TableCell>
-                        )}
+                   {["Employee", "HOD"].includes(user?.loginType) &&
+  a.employeeId === user.employeeId &&
+  isLateArrivalEligible(a.timeIn, a.logDate) &&
+  (a.status?.includes("Late Arrival") || a.status?.includes("(LA)")) &&
+  !a.status?.includes("Approval Pending") &&
+  !a.status?.includes("Allowed") &&
+  !a.status?.includes("Denied") && (
+    <TableCell>
+      <Button
+        onClick={() => handleApologizeClick(a)}
+        className="bg-yellow-500 hover:bg-yellow-600 text-white"
+        disabled={(apologyCounts[a.employeeId]?.count || 0) >= 3}
+      >
+        Apologize
+      </Button>
+    </TableCell>
+)}
+
                       </TableRow>
                     ))}
                   </TableBody>

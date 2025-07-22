@@ -1,3 +1,4 @@
+//leave list updated version (hod functionlaity all set- version 1.1)
 import React, { useEffect, useState, useContext, useCallback, useMemo } from "react";
 import { motion } from "framer-motion";
 import { Card, CardContent } from "../components/ui/card";
@@ -602,6 +603,92 @@ const filteredGroupedLeaves = useMemo(() => {
         : leaveType}
     </span>
   );
+
+  //helperfunction
+  const renderApprovalTimeFrame = (leave) => {
+  const approvedDatesRaw =
+    leaveAdjustments?.[selectedLeave?._id]?.approvedDates ||
+    selectedLeave?.approvedDates ||
+    [];
+
+  const adjustedDays =
+    leaveAdjustments?.[selectedLeave?._id]?.adjustedDays || 0;
+
+  const isoDate = new Date(date).toISOString().split("T")[0];
+
+  const approvedSet = new Set(
+    approvedDatesRaw.map((d) =>
+      new Date(typeof d === "string" ? d : d?.date || d)
+        .toISOString()
+        .split("T")[0]
+    )
+  );
+
+  const rejectedSet = new Set(
+    (selectedLeave?.rejectedDates || []).map((rd) =>
+      new Date(typeof rd === "string" ? rd : rd?.date)
+        .toISOString()
+        .split("T")[0]
+    )
+  );
+
+  const isRejected = rejectedSet.has(isoDate);
+  const isSelected = approvedSet.has(isoDate);
+  const canSelectMore = approvedSet.size < adjustedDays;
+
+ return (
+    <div key={date} className="flex items-center gap-2 mb-1">
+      <input
+        type="checkbox"
+        checked={isSelected}
+        disabled={isRejected || (!isSelected && !canSelectMore)}
+        onChange={() => {
+          const newDates = isSelected
+            ? approvedDatesRaw.filter((d) => {
+                const dIso = new Date(typeof d === "string" ? d : d?.date || d)
+                  .toISOString()
+                  .split("T")[0];
+                return dIso !== isoDate;
+              })
+            : [...approvedDatesRaw, date];
+
+          if (newDates.length > adjustedDays) return;
+
+          handleAdjustmentChange?.(
+            selectedLeave?._id,
+            "approvedDates",
+            newDates,
+            getLeaveDuration?.(selectedLeave) || 0
+          );
+        }}
+        id={`date-${selectedLeave?._id}-${date}`}
+        aria-label={`Select ${formatISTDate?.(date) || date} for ${
+          selectedLeave?.leaveType || "leave"
+        }`}
+      />
+      <span
+        className={`text-sm ${
+          isSelected
+            ? ""
+            : isRejected
+            ? "text-red-700 line-through font-semibold"
+            : "text-yellow-700 font-semibold"
+        }`}
+      >
+        {formatISTDate?.(date) || date}
+      </span>
+      {!isSelected && isRejected && (
+        <span className="text-xs text-red-800 font-semibold ml-1">
+          (Rejected)
+        </span>
+      )}
+      {!isSelected && !isRejected && (
+        <span className="text-xs text-red-600 ml-1">(Not Approved)</span>
+      )}
+    </div>
+  );
+}
+
 
 // Update the triggerConfirmation function
 const triggerConfirmation = (id, status, currentStage, remarks = "", days = null, approvedDates = []) => {
@@ -1383,644 +1470,905 @@ const triggerConfirmation = (id, status, currentStage, remarks = "", days = null
         : "Details of the selected leave application."}
     </DialogDescription>
   </DialogHeader>
- {selectedLeave && (
+{selectedLeave && (
   <div className="space-y-6">
     <div className="border p-4 rounded-lg bg-gray-50">
       <p className="text-sm font-medium text-gray-700">
         <strong>Leave Application Date:</strong>{" "}
-        {formatISTDate(
+        {formatISTDate?.(
           selectedLeave.composite
             ? Math.min(
-                ...selectedLeave.leaves.map((l) =>
-                  new Date(l.createdAt)
-                )
+                ...selectedLeave.leaves
+                  ?.map((l) => new Date(l?.createdAt))
+                  ?.filter((d) => d instanceof Date && !isNaN(d))
               )
-            : selectedLeave.createdAt
-        )}
+            : new Date(selectedLeave?.createdAt)
+        ) || "N/A"}
       </p>
     </div>
     {selectedLeave.composite ? (
-      selectedLeave.leaves.map((leave, index) => (
+      selectedLeave.leaves?.map((leave) => (
         <div
-          key={leave._id}
+          key={leave?._id}
           className="border p-4 rounded-lg bg-gray-50 mb-4 last:mb-0"
         >
           <h3 className="font-semibold text-lg mb-2">
-            {getLeaveTypeBadge(leave.leaveType)}
+            {getLeaveTypeBadge?.(leave?.leaveType) || "Unknown Leave Type"}
           </h3>
           <div className="grid grid-cols-2 gap-4 text-sm text-gray-700">
             <p>
               <strong>From:</strong>{" "}
-              {formatISTDate(
-                leave.fullDay?.from || leave.halfDay?.date || leave.createdAt
-              )}
-              {leave.fullDay?.fromDuration === "half" &&
-                ` (${leave.fullDay.fromSession})`}
+              {formatISTDate?.(
+                leave?.fullDay?.from ||
+                  leave?.halfDay?.date ||
+                  leave?.createdAt
+              ) || "N/A"}
+              {leave?.fullDay?.fromDuration === "half" &&
+                ` (${leave?.fullDay.fromSession})`}
             </p>
             <p>
               <strong>To:</strong>{" "}
-              {leave.fullDay?.to
-                ? `${formatISTDate(leave.fullDay.to)}${
-                    leave.fullDay.toDuration === "half"
-                      ? ` (${leave.fullDay.toSession})`
+              {leave?.fullDay?.to
+                ? `${formatISTDate?.(leave.fullDay.to) || "N/A"}${
+                    leave?.fullDay.toDuration === "half"
+                      ? ` (${leave?.fullDay.toSession})`
                       : ""
                   }`
                 : "N/A"}
             </p>
-           <p>
-  <strong>Leave Duration:</strong>{" "}
-  {formatDurationDisplay(getLeaveDuration(leave))}
-</p>
-
             <p>
-              <strong>Reason:</strong> {leave.reason || "N/A"}
+              <strong>Leave Duration:</strong>{" "}
+              {formatDurationDisplay?.(getLeaveDuration?.(leave)) || "N/A"}
+            </p>
+            <p>
+              <strong>Reason:</strong> {leave?.reason || "N/A"}
             </p>
             <p>
               <strong>Charge Given To:</strong>{" "}
-              {leave.chargeGivenTo?.name || "N/A"}
+              {leave?.chargeGivenTo?.name || "N/A"}
             </p>
             <p>
-              <strong>Emergency Contact:</strong>{" "}
-              {leave.emergencyContact || "N/A"}
+              <strong className="text-sm font-medium">Emergency Contact:</strong>{" "}
+              {leave?.emergencyContact || "N/A"}
             </p>
-            {leave.compensatoryDate && (
+            {leave?.compensatoryDate && (
               <p>
                 <strong>Compensatory Date:</strong>{" "}
-                {formatISTDate(leave.compensatoryDate)}
+                {formatISTDate?.(leave.compensatoryDate) || "N/A"}
               </p>
             )}
-            {leave.projectDetails && (
+            {leave?.projectDetails && (
               <p>
                 <strong>Project Details:</strong> {leave.projectDetails}
               </p>
             )}
-            {leave.restrictedHoliday && (
+            {leave?.restrictedHoliday && (
               <p>
-                <strong>Restricted Holiday:</strong>{" "}
-                {leave.restrictedHoliday}
+                <strong>Restricted Holiday:</strong> {leave.restrictedHoliday}
               </p>
             )}
-            {leave.medicalCertificate && (
+            {leave?.medicalCertificate && (
               <p>
                 <strong>Medical Certificate:</strong>{" "}
                 <Button
                   size="sm"
                   onClick={() =>
-                    handleViewFile(leave.medicalCertificate?._id)
+                    handleViewFile?.(leave.medicalCertificate?._id)
                   }
-                  className="bg-blue-600 text-white hover:bg-blue-700 rounded-md"
-                  disabled={fileError}
+                  className="bg-blue-600 text-white hover:bg-blue-700 rounded-md disabled:opacity-50"
+                  disabled={fileError || !leave.medicalCertificate?._id}
+                  aria-label={`View medical certificate for ${leave?.leaveType || "leave"} ${leave?._id}`}
                 >
                   View {leave.medicalCertificate.filename}
                 </Button>
               </p>
             )}
-            {leave.approvedDates?.length > 0 && (
+            {leave?.approvedDates?.length > 0 && (
               <p>
                 <strong>Approved Dates:</strong>{" "}
-                {leave.approvedDates.map(ad => `${formatISTDate(ad.date)}${ad.duration ? ` (${ad.duration})` : ''}`).join(', ')}
+                {leave.approvedDates
+                  ?.map((ad) =>
+                    `${formatISTDate?.(ad?.date) || "N/A"}${
+                      ad?.duration ? ` (${ad.duration})` : ""
+                    }`
+                  )
+                  .join(", ") || "N/A"}
               </p>
             )}
-            {leave.rejectedDates?.length > 0 && (
+            {leave?.rejectedDates?.length > 0 && (
               <p>
                 <strong>Rejected Dates:</strong>{" "}
-                {leave.rejectedDates.map(rd => `${formatISTDate(rd.date)}${rd.duration ? ` (${rd.duration})` : ''}`).join(', ')}
+                {leave.rejectedDates
+                  ?.map((rd) =>
+                    `${formatISTDate?.(rd?.date) || "N/A"}${
+                      rd?.duration ? ` (${rd.duration})` : ""
+                    }`
+                  )
+                  .join(", ") || "N/A"}
               </p>
             )}
           </div>
           {user?.loginType === "Employee" && leave?.status && (
             <div className="mt-4">
-              {leave.status.hod === "Approved" && leave.status.ceo === "Approved" && (
-                <p className="text-green-600 ">
-                 🎉 Hurray! Your leave has been approved. ✅
-                </p>
-              )}
-              {(leave.status.hod === "Rejected" || leave.status.ceo === "Rejected" || leave.status.admin === "Rejected") && (
-                <p className="text-red-600 ">
-                  😔 Sorry,Your leave has been rejected. ❌
-                </p>
-              )}
-              {(leave.status.hod !== "Approved" && leave.status.hod !== "Rejected" && leave.status.ceo !== "Approved" && leave.status.ceo !== "Rejected" && leave.status.ceo !== "Pending") && (
-                <p className="text-yellow-600 ">
-                  ⏳ Hey, your leave is pending for approval.
-                </p>
+              {leave.status.hod === "Approved" && leave.status.ceo === "Approved" ? (
+                <p className="text-green-600">🎉 Approved ✅</p>
+              ) : leave.status.hod === "Rejected" ||
+                leave.status.ceo === "Rejected" ||
+                leave.status.admin === "Rejected" ? (
+                <p className="text-red-600">😔 Rejected ❌</p>
+              ) : (leave.status.hod === "Pending" ||
+                  leave.status.hod === "Submitted" ||
+                  leave.status.ceo === "Pending" ||
+                  leave.status.ceo === "Submitted") && (
+                <p className="text-yellow-600">⏳ Pending</p>
               )}
             </div>
           )}
           {user.loginType === "HOD" && leave?.status?.hod === "Pending" && (
             <div className="mt-4 flex items-center gap-4">
               <div className="flex items-center gap-2">
-                <Label
-                  htmlFor={`adjustedDays-${leave._id}`}
-                  className="text-sm font-medium"
-                >
+                <Label htmlFor={`adjustedDays-${leave?._id}`} className="text-sm font-medium">
                   Approved Days
                 </Label>
                 <Input
-                  id={`adjustedDays-${leave._id}`}
+                  id={`adjustedDays-${leave?._id}`}
                   type="number"
                   min="0"
-                  max={getLeaveDuration(leave)}
+                  max={getLeaveDuration?.(leave) || 0}
                   value={
-                    leaveAdjustments[leave._id]?.adjustedDays !== undefined
-                      ? leaveAdjustments[leave._id].adjustedDays
-                      : getLeaveDuration(leave)
+                    leaveAdjustments?.[leave?._id]?.adjustedDays ?? getLeaveDuration?.(leave) ?? 0
                   }
-                  onChange={(e) => {
-                    const newDays = e.target.value ? parseFloat(e.target.value) : null;
-                    handleAdjustmentChange(leave._id, "adjustedDays", newDays, getLeaveDuration(leave));
-                  }}
+                  onChange={(e) =>
+                    handleAdjustmentChange?.(
+                      leave?._id,
+                      "adjustedDays",
+                      e.target.value ? parseFloat(e.target.value) : null,
+                      getLeaveDuration?.(leave) || 0
+                    )
+                  }
                   className="border-gray-300 focus:ring-blue-500 focus:border-blue-500 rounded-md w-24"
+                  aria-label={`Adjust days for ${leave?.leaveType || "leave"} ${leave?._id}`}
                 />
               </div>
-
-{leaveAdjustments[leave._id]?.adjustedDays !== undefined &&
- leaveAdjustments[leave._id]?.adjustedDays < getLeaveDuration(leave) && (
-<div className="flex flex-col gap-2">
- <Label className="text-sm font-medium">Approval Time Frame</Label>
-<div className="border p-2 rounded-md bg-white shadow-sm">
-  {(() => {
-    const segmentDates = getLeaveDates(leave).filter((date) => {
-      const jsDate = new Date(date);
-      const isSunday = jsDate.getDay() === 0;
-      const isHoliday = yearlyHolidays.includes(date);
-      return !isSunday && !isHoliday;
-    });
-
-    const approvedDates = leaveAdjustments[leave._id]?.approvedDates || [];
-    const adjustedDays = leaveAdjustments[leave._id]?.adjustedDays || 0;
-
-    return segmentDates.map((date) => {
-      const isSelected = approvedDates.includes(date);
-      const canSelectMore = approvedDates.length < adjustedDays;
-
-      return (
-        <div key={date} className="flex items-center gap-2 mb-1">
-          <input
-            type="checkbox"
-            checked={isSelected}
-            disabled={!isSelected && !canSelectMore}
-            onChange={() => {
-              const newDates = isSelected
-                ? approvedDates.filter((d) => d !== date)
-                : [...approvedDates, date];
-
-              if (newDates.length > adjustedDays) return;
-
-              handleAdjustmentChange(
-                leave._id,
-                "approvedDates",
-                newDates,
-                getLeaveDuration(leave)
-              );
-            }}
-          />
-          <span>{formatISTDate(date)}</span>
-        </div>
-      );
-    });
-  })()}
-  <div className="text-sm text-gray-500 mt-1">
-    {leaveAdjustments[leave._id]?.approvedDates?.length || 0}/{leaveAdjustments[leave._id]?.adjustedDays || 0} days selected
-  </div>
-</div>
-
-</div>
-)}
-
-
+              {leaveAdjustments?.[leave?._id]?.adjustedDays !== undefined &&
+                leaveAdjustments[leave?._id]?.adjustedDays < (getLeaveDuration?.(leave) || 0) && (
+                  <div className="flex flex-col gap-2">
+                    <Label className="text-sm font-medium">Approval Time Frame</Label>
+                    <div className="border p-2 rounded-md bg-white shadow-sm">
+                     
+                       {renderApprovalTimeFrame(leave)}
+                    </div>
+                  </div>
+                )}
               <div className="flex gap-2 items-center">
                 <Button
                   variant="default"
                   size="sm"
-                  className="bg-green-600 hover:bg-green-700 text-white rounded-md"
+                  className="bg-green-600 hover:bg-green-700 text-white rounded-md disabled:opacity-50"
                   onClick={() =>
-                    triggerConfirmation(
-                      leave._id,
+                    triggerConfirmation?.(
+                      leave?._id,
                       "Approved",
                       "hod",
                       "",
-                      leaveAdjustments[leave._id]?.adjustedDays !== undefined
-                        ? leaveAdjustments[leave._id].adjustedDays
-                        : getLeaveDuration(leave),
-                      leaveAdjustments[leave._id]?.approvedDates || []
+                      leaveAdjustments?.[leave?._id]?.adjustedDays ??
+                        getLeaveDuration?.(leave) ??
+                        0,
+                      leaveAdjustments?.[leave?._id]?.approvedDates || []
                     )
                   }
                   disabled={
                     loading ||
-                    leave.status.hod !== "Pending" ||
-                    leaveAdjustments[leave._id]?.adjustedDays === 0
+                    leave?.status?.hod !== "Pending" ||
+                    (leaveAdjustments?.[leave?._id]?.adjustedDays ?? 0) === 0
                   }
+                  aria-label={`Approve ${leave?.leaveType || "leave"} ${leave?._id} for ${leave?.name}`}
                 >
                   Approve
-                  {leaveAdjustments[leave._id]?.adjustedDays !== undefined &&
-                    ` (${leaveAdjustments[leave._id].adjustedDays} days)`}
+                  {leaveAdjustments?.[leave?._id]?.adjustedDays !== undefined &&
+                    ` (${leaveAdjustments[leave?._id].adjustedDays} days)`}
                 </Button>
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="destructive"
-                    size="sm"
-                    className="bg-red-600 hover:bg-red-700 text-white rounded-md"
-                    onClick={() => handleRejection(leave._id, "hod")}
-                    disabled={loading || leave.status.hod !== "Pending"}
-                  >
-                    Reject
-                  </Button>
-                </div>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  className="bg-red-600 hover:bg-red-700 text-white rounded-md disabled:opacity-50"
+                  onClick={() => handleRejection?.(leave?._id, "hod")}
+                  disabled={loading || leave?.status?.hod !== "Pending"}
+                  aria-label={`Reject ${leave?.leaveType || "leave"} ${leave?._id} for ${leave?.name}`}
+                >
+                  Reject
+                </Button>
               </div>
             </div>
           )}
-          {["HOD", "Admin", "CEO"].includes(user?.loginType) &&
-            viewMode !== "own" && (
-              <div className="mt-4 flex gap-2">
-                {user.loginType === "CEO" &&
-                  ["Approved", "Submitted"].includes(leave.status.hod) &&
-                  leave?.status?.ceo === "Pending" && (
-                    <>
-                      <Button
-                        variant="default"
-                        size="sm"
-                        className="bg-green-600 hover:bg-green-700 text-white rounded-md"
-                        onClick={() =>
-                          triggerConfirmation(leave._id, "Approved", "ceo")
-                        }
-                        disabled={loading || leave.status.ceo !== "Pending"}
-                      >
-                        Approve
-                      </Button>
-                      <Button
-                        variant="destructive"
-                        size="sm"
-                        className="bg-red-600 hover:bg-red-700 text-white rounded-md"
-                        onClick={() => handleRejection(leave._id, "ceo")}
-                        disabled={loading || leave.status.ceo !== "Pending"}
-                      >
-                        Reject
-                      </Button>
-                    </>
-                  )}
-                {user.loginType === "Admin" &&
-                  leave?.status?.ceo === "Approved" &&
-                  leave?.status?.admin === "Pending" && (
-                    <Button
-                      variant="default"
-                      size="sm"
-                      className="bg-green-600 hover:bg-green-700 text-white rounded-md"
-                      onClick={() =>
-                        handleApproval(
-                          leave._id,
-                          "Acknowledged",
-                          "admin"
-                        )
-                      }
-                      disabled={loading || leave.status.admin !== "Pending"}
-                    >
-                      Acknowledge
-                    </Button>
-                  )}
-                {(leave.status.hod !== "Pending" &&
-                  leave.status.hod !== "Submitted") &&
-                  user.loginType === "HOD" && (
-                    <span className="text-sm text-gray-500">
-                      Action Completed
-                    </span>
-                  )}
-                {(leave.status.ceo !== "Pending" &&
-                  leave.status.ceo !== "Submitted") &&
-                  user.loginType === "CEO" && (
-                    <span className="text-sm text-gray-500">
-                      Action Completed
-                    </span>
-                  )}
-                {(leave.status.admin !== "Pending" &&
-                  leave.status.admin !== "Submitted") &&
-                  user.loginType === "Admin" && (
-                    <span className="text-sm text-gray-500">
-                      Action Completed
-                    </span>
-                  )}
+          {user.loginType === "CEO" &&
+            ["Approved", "Submitted"].includes(leave?.status?.hod) &&
+            leave?.status?.ceo === "Pending" && (
+              <div className="mt-4 flex flex-col gap-4">
+                <div className="flex items-center gap-2">
+                  <Label
+                    htmlFor={`adjustedDays-${leave?._id}`}
+                    className="text-sm font-medium"
+                  >
+                    Approved Days
+                  </Label>
+                  <Input
+                    id={`adjustedDays-${leave?._id}`}
+                    type="number"
+                    min="0"
+                    max={
+                      leave?.approvedDates?.length ||
+                      leaveAdjustments?.[leave?._id]?.approvedDates?.length ||
+                      leaveAdjustments?.[leave?._id]?.adjustedDays ||
+                      getLeaveDuration?.(leave) ||
+                      0
+                    }
+                    value={
+                      leaveAdjustments?.[leave?._id]?.adjustedDays ??
+                      leave?.approvedDates?.length ??
+                      leaveAdjustments?.[leave?._id]?.approvedDates?.length ??
+                      leaveAdjustments?.[leave?._id]?.adjustedDays ??
+                      getLeaveDuration?.(leave) ??
+                      0
+                    }
+                    onChange={(e) =>
+                      handleAdjustmentChange?.(
+                        leave?._id,
+                        "adjustedDays",
+                        e.target.value ? parseFloat(e.target.value) : null,
+                        leave?.approvedDates?.length ||
+                          leaveAdjustments?.[leave?._id]?.approvedDates?.length ||
+                          leaveAdjustments?.[leave?._id]?.adjustedDays ||
+                          getLeaveDuration?.(leave) ||
+                          0
+                      )
+                    }
+                    className="border-gray-300 focus:ring-blue-500 focus:border-blue-500 rounded-md w-24"
+                    aria-label={`Adjust days for ${leave?.leaveType || "leave"} ${leave?._id}`}
+                  />
+                </div>
+ {leaveAdjustments?.[leave?._id]?.adjustedDays !== undefined &&
+  leaveAdjustments[leave?._id]?.adjustedDays <
+    (leave?.approvedDates?.length ||
+      leaveAdjustments?.[leave?._id]?.approvedDates?.length ||
+      getLeaveDuration?.(leave) ||
+      0) && (
+    <div className="flex flex-col gap-2">
+      <Label className="text-sm font-medium">Approval Time Frame</Label>
+      <div className="border p-2 rounded-md bg-white shadow-sm">
+        {getLeaveDates?.(leave)
+          ?.filter((date) => {
+            const jsDate = new Date(date);
+            return (
+              jsDate instanceof Date &&
+              !isNaN(jsDate) &&
+              jsDate.getDay() !== 0 && // Exclude Sundays
+              !yearlyHolidays?.includes(date) &&
+            !new Set(
+  leave?.rejectedDates?.map((rd) =>
+    new Date(typeof rd === "string" ? rd : rd.date).toISOString().split("T")[0]
+  )
+).has(jsDate.toISOString().split("T")[0])
+
+            );
+          })
+          ?.map((date) => {
+            const approvedDates =
+              leaveAdjustments?.[leave?._id]?.approvedDates || leave?.approvedDates || [];
+            const adjustedDays = leaveAdjustments?.[leave?._id]?.adjustedDays || 0;
+            const isSelected = approvedDates.includes(date);
+            const canSelectMore = approvedDates.length < adjustedDays;
+            return (
+              <div key={date} className="flex items-center gap-2 mb-1">
+                <input
+                  type="checkbox"
+                  checked={isSelected}
+                  disabled={!isSelected && !canSelectMore}
+                  onChange={() => {
+                    const newDates = isSelected
+                      ? approvedDates.filter((d) => d !== date)
+                      : [...approvedDates, date];
+                    if (newDates.length > adjustedDays) return;
+                    handleAdjustmentChange?.(
+                      leave?._id,
+                      "approvedDates",
+                      newDates,
+                      getLeaveDuration?.(leave) || 0
+                    );
+                  }}
+                  id={`date-${leave?._id}-${date}`}
+                  aria-label={`Select ${formatISTDate?.(date) || date} for ${leave?.leaveType || "leave"}`}
+                />
+                <span>{formatISTDate?.(date) || date}</span>
               </div>
+            );
+          })}
+        <div className="text-sm text-gray-500 mt-1">
+          {leaveAdjustments?.[leave?._id]?.approvedDates?.length ||
+            leave?.approvedDates?.length ||
+            0}/{leaveAdjustments?.[leave?._id]?.adjustedDays || 0} days selected
+        </div>
+      </div>
+    </div>
+)}
+<div className="mt-4 flex gap-2 items-center">
+  <Button
+    variant="default"
+    size="sm"
+    className="bg-green-600 hover:bg-green-700 text-white rounded-md disabled:opacity-50"
+    onClick={() =>
+      triggerConfirmation?.(
+        leave?._id,
+        "Approved",
+        "ceo",
+        "",
+        leaveAdjustments?.[leave?._id]?.adjustedDays ??
+          leave?.approvedDates?.length ??
+          leaveAdjustments?.[leave?._id]?.approvedDates?.length ??
+          leaveAdjustments?.[leave?._id]?.adjustedDays ??
+          getLeaveDuration?.(leave) ??
+          0,
+        leaveAdjustments?.[leave?._id]?.approvedDates || leave?.approvedDates || []
+      )
+    }
+    disabled={
+      loading ||
+      leave?.status?.ceo !== "Pending" ||
+      (leaveAdjustments?.[leave?._id]?.adjustedDays ?? 0) === 0 ||
+      !getLeaveDates?.(leave)
+        ?.filter((date) => {
+          const jsDate = new Date(date);
+          return (
+            jsDate instanceof Date &&
+            !isNaN(jsDate) &&
+            jsDate.getDay() !== 0 &&
+            !yearlyHolidays?.includes(date) &&
+            !leave?.rejectedDates?.some((rd) => {
+              const rejectedDate = new Date(rd?.date);
+              return rejectedDate instanceof Date && !isNaN(rejectedDate) && rejectedDate.toISOString().split('T')[0] === jsDate.toISOString().split('T')[0];
+            })
+          );
+        })
+        .length
+    }
+    aria-label={`Approve ${leave?.leaveType || "leave"} ${leave?._id} for ${leave?.name}`}
+  >
+    Approve
+  </Button>
+  <Button
+    variant="destructive"
+    size="sm"
+    className="bg-red-600 hover:bg-red-700 text-white rounded-md disabled:opacity-50"
+    onClick={() => handleRejection?.(leave?._id, "ceo")}
+    disabled={loading || leave?.status?.ceo !== "Pending"}
+    aria-label={`Reject ${leave?.leaveType || "leave"} ${leave?._id} for ${leave?.name}`}
+  >
+    Reject
+  </Button>
+</div>
+              </div>
+            )}
+          {user.loginType === "Admin" &&
+            leave?.status?.ceo === "Approved" &&
+            leave?.status?.admin === "Pending" && (
+              <Button
+                variant="default"
+                size="sm"
+                className="bg-green-600 hover:bg-green-700 text-white rounded-md disabled:opacity-50"
+                onClick={() =>
+                  handleApproval?.(selectedLeave?._id, "Acknowledged", "admin")
+                }
+                disabled={loading || leave?.status?.admin !== "Pending"}
+                aria-label={`Acknowledge ${leave?.leaveType || "leave"} ${leave?._id} for ${leave?.name}`}
+              >
+                Acknowledge
+              </Button>
+            )}
+          {(user.loginType === "HOD" &&
+            leave?.status?.hod !== "Pending" &&
+            leave?.status?.hod !== "Submitted") ||
+            (user.loginType === "CEO" &&
+              leave?.status?.ceo !== "Pending" &&
+              leave?.status?.ceo !== "Submitted") ||
+            (user.loginType === "Admin" &&
+              leave?.status?.admin !== "Pending" &&
+              leave?.status?.admin !== "Submitted") && (
+              <span className="text-sm text-gray-500">Done</span>
             )}
         </div>
       ))
     ) : (
       <div className="border p-4 rounded-lg bg-gray-50">
         <h3 className="font-semibold text-lg mb-2">
-          {getLeaveTypeBadge(selectedLeave.leaveType)}
+          {getLeaveTypeBadge?.(selectedLeave?.leaveType) || "Unknown Leave Type"}
         </h3>
         <div className="grid grid-cols-2 gap-4 text-sm text-gray-700">
           <p>
             <strong>From:</strong>{" "}
-            {formatISTDate(
-              selectedLeave.fullDay?.from ||
-                selectedLeave.halfDay?.date ||
-                selectedLeave.createdAt
-            )}
-            {selectedLeave.fullDay?.fromDuration === "half" &&
-              ` (${selectedLeave.fullDay.fromSession})`}
+            {formatISTDate?.(
+              selectedLeave?.fullDay?.from ||
+                selectedLeave?.halfDay?.date ||
+                selectedLeave?.createdAt
+            ) || "N/A"}
+            {selectedLeave?.fullDay?.fromDuration === "half" &&
+              ` (${selectedLeave?.fullDay.fromSession})`}
           </p>
           <p>
             <strong>To:</strong>{" "}
-            {selectedLeave.fullDay?.to
-              ? `${formatISTDate(selectedLeave.fullDay.to)}${
-                  selectedLeave.fullDay.toDuration === "half"
-                    ? ` (${selectedLeave.fullDay.toSession})`
+            {selectedLeave?.fullDay?.to
+              ? `${formatISTDate?.(selectedLeave.fullDay.to) || "N/A"}${
+                  selectedLeave?.fullDay.toDuration === "half"
+                    ? ` (${selectedLeave?.fullDay.toSession})`
                     : ""
                 }`
               : "N/A"}
           </p>
           <p>
             <strong>Leave Duration:</strong>{" "}
-            {formatDurationDisplay(getLeaveDuration(selectedLeave))}
+            {formatDurationDisplay?.(getLeaveDuration?.(selectedLeave)) || "N/A"}
           </p>
           <p>
-            <strong>Reason:</strong> {selectedLeave.reason || "N/A"}
+            <strong>Reason:</strong> {selectedLeave?.reason || "N/A"}
           </p>
           <p>
             <strong>Charge Given To:</strong>{" "}
-            {selectedLeave.chargeGivenTo?.name || "N/A"}
+            {selectedLeave?.chargeGivenTo?.name || "N/A"}
           </p>
           <p>
-            <strong>Emergency Contact:</strong>{" "}
-            {selectedLeave.emergencyContact || "N/A"}
+            <strong className="text-sm font-medium">Emergency Contact:</strong>{" "}
+            {selectedLeave?.emergencyContact || "N/A"}
           </p>
-          {selectedLeave.compensatoryDate && (
+          {selectedLeave?.compensatoryDate && (
             <p>
               <strong>Compensatory Date:</strong>{" "}
-              {formatISTDate(selectedLeave.compensatoryDate)}
+              {formatISTDate?.(selectedLeave.compensatoryDate) || "N/A"}
             </p>
           )}
-          {selectedLeave.projectDetails && (
+          {selectedLeave?.projectDetails && (
             <p>
-              <strong>Project Details:</strong>{" "}
-              {selectedLeave.projectDetails}
+              <strong>Project Details:</strong> {selectedLeave.projectDetails}
             </p>
           )}
-          {selectedLeave.restrictedHoliday && (
+          {selectedLeave?.restrictedHoliday && (
             <p>
               <strong>Restricted Holiday:</strong>{" "}
               {selectedLeave.restrictedHoliday}
             </p>
           )}
-          {selectedLeave.medicalCertificate && (
+          {selectedLeave?.medicalCertificate && (
             <p>
               <strong>Medical Certificate:</strong>{" "}
               <Button
                 size="sm"
-                onClick={handleViewFile}
-                className="bg-blue-600 text-white hover:bg-blue-700 rounded-md"
-                disabled={fileError}
+                onClick={() =>
+                  handleViewFile?.(selectedLeave.medicalCertificate?._id)
+                }
+                className="bg-blue-600 text-white hover:bg-blue-700 rounded-md disabled:opacity-50"
+                disabled={fileError || !selectedLeave.medicalCertificate?._id}
+                aria-label={`View medical certificate for ${selectedLeave?.leaveType || "leave"} ${selectedLeave?._id}`}
               >
                 View {selectedLeave.medicalCertificate.filename}
               </Button>
             </p>
           )}
-          {selectedLeave.approvedDates?.length > 0 && (
+          {selectedLeave?.approvedDates?.length > 0 && (
             <p>
               <strong>Approved Dates:</strong>{" "}
-              {selectedLeave.approvedDates.map(ad => `${formatISTDate(ad.date)}${ad.duration ? ` (${ad.duration})` : ''}`).join(', ')}
+              {selectedLeave.approvedDates
+                ?.map((ad) =>
+                  `${formatISTDate?.(ad?.date) || "N/A"}${
+                    ad?.duration ? ` (${ad.duration})` : ""
+                  }`
+                )
+                .join(", ") || "N/A"}
             </p>
           )}
-          {selectedLeave.rejectedDates?.length > 0 && (
+          {selectedLeave?.rejectedDates?.length > 0 && (
             <p>
               <strong>Rejected Dates:</strong>{" "}
-              {selectedLeave.rejectedDates.map(rd => `${formatISTDate(rd.date)}${rd.duration ? ` (${rd.duration})` : ''}`).join(', ')}
+              {selectedLeave.rejectedDates
+                ?.map((rd) =>
+                  `${formatISTDate?.(rd?.date) || "N/A"}${
+                    rd?.duration ? ` (${rd.duration})` : ""
+                  }`
+                )
+                .join(", ") || "N/A"}
             </p>
           )}
         </div>
- {user?.loginType === "Employee" && selectedLeave?.status && (
-  <div className="mt-4">
-    {selectedLeave.status.hod === "Approved" && selectedLeave.status.ceo === "Approved" && (
-      <p className="text-green-600 ">
-       🎉 Hurray! Your leave has been approved. ✅
-      </p>
-    )}
-    {(selectedLeave.status.hod === "Rejected" || selectedLeave.status.ceo === "Rejected" || selectedLeave.status.admin === "Rejected") && (
-      <p className="text-red-600 ">
-       😔 Sorry,Your leave has been rejected. ❌
-      </p>
-    )}
-    {(selectedLeave.status.hod !== "Approved" && selectedLeave.status.hod !== "Rejected" && selectedLeave.status.ceo !== "Approved" && selectedLeave.status.ceo !== "Rejected" && selectedLeave.status.ceo === "Pending" && selectedLeave.status.hod === "Pending") && (
-      <p className="text-blue-800 ">
-       ⏳ Hey, your leave is pending for approval.
-      </p>
-    )}
-  </div>
-)}
-     {user.loginType === "HOD" && selectedLeave?.status?.hod === "Pending" && (
-  <div className="mt-4 flex items-center gap-4">
-    <div className="flex items-center gap-2">
-      <Label
-        htmlFor={`adjustedDays-${selectedLeave._id}`}
-        className="text-sm font-medium"
-      >
-        Approved Days
-      </Label>
-      <Input
-        id={`adjustedDays-${selectedLeave._id}`}
-        type="number"
-        min="0"
-        max={getLeaveDuration(selectedLeave)}
-        value={
-          leaveAdjustments[selectedLeave._id]?.adjustedDays !== undefined
-            ? leaveAdjustments[selectedLeave._id].adjustedDays
-            : getLeaveDuration(selectedLeave)
-        }
-        onChange={(e) => {
-          const newDays = e.target.value ? parseFloat(e.target.value) : null;
-          handleAdjustmentChange(
-            selectedLeave._id,
-            "adjustedDays",
-            newDays,
-            getLeaveDuration(selectedLeave)
-          );
-        }}
-        className="border-gray-300 focus:ring-blue-500 focus:border-blue-500 rounded-md w-24"
-      />
-    </div>
-    {leaveAdjustments[selectedLeave._id]?.adjustedDays !== undefined &&
-      leaveAdjustments[selectedLeave._id]?.adjustedDays < getLeaveDuration(selectedLeave) && (
-<div className="flex flex-col gap-2">
-  <Label className="text-sm font-medium">Approval Time Frame</Label>
-  <div className="border p-2 rounded-md bg-white shadow-sm">
- {
-  (
-    selectedLeave.composite
-      ? getCompositeLeaveDates(selectedLeave.leaves)
-      : getLeaveDates(selectedLeave)
-  )
-    .filter((date) => {
-      const jsDate = new Date(date);
-      const isSunday = jsDate.getDay() === 0;
-      const isHoliday = yearlyHolidays.includes(date);
-      return !isSunday && !isHoliday;
-    })
-    .map((date) => {
-      const approvedDates = leaveAdjustments[selectedLeave._id]?.approvedDates || [];
-      const adjustedDays = leaveAdjustments[selectedLeave._id]?.adjustedDays || 0;
-      const isSelected = approvedDates.includes(date);
-      const canSelectMore = approvedDates.length < adjustedDays;
-
-      return (
-        <div key={date} className="flex items-center gap-2 mb-1">
-          <input
-            type="checkbox"
-            checked={isSelected}
-            disabled={!isSelected && !canSelectMore}
-            onChange={() => {
-              const newDates = isSelected
-                ? approvedDates.filter((d) => d !== date)
-                : [...approvedDates, date];
-
-              if (newDates.length > adjustedDays) return;
-
-              handleAdjustmentChange(
-                selectedLeave._id,
-                "approvedDates",
-                newDates,
-                getLeaveDuration(selectedLeave)
-              );
-            }}
-          />
-          <span>{formatISTDate(date)}</span>
-        </div>
-      );
-    })
-}
-
-
-    <div className="text-sm text-gray-500 mt-1">
-      {leaveAdjustments[selectedLeave._id]?.approvedDates?.length || 0}/{leaveAdjustments[selectedLeave._id]?.adjustedDays || 0} days selected
-    </div>
-  </div>
-</div>
-    )}
-    <div className="flex gap-2 items-center">
-      <Button
-        variant="default"
-        size="sm"
-        className="bg-green-600 hover:bg-green-700 text-white rounded-md"
-        onClick={() =>
-          triggerConfirmation(
-            selectedLeave._id,
-            "Approved",
-            "hod",
-            "",
-            leaveAdjustments[selectedLeave._id]?.adjustedDays !== undefined
-              ? leaveAdjustments[selectedLeave._id].adjustedDays
-              : getLeaveDuration(selectedLeave),
-            leaveAdjustments[selectedLeave._id]?.approvedDates || []
-          )
-        }
-        disabled={
-          loading ||
-          selectedLeave.status.hod !== "Pending" ||
-          leaveAdjustments[selectedLeave._id]?.adjustedDays === 0
-        }
-      >
-        Approve
-        {leaveAdjustments[selectedLeave._id]?.adjustedDays !== undefined &&
-          ` (${leaveAdjustments[selectedLeave._id].adjustedDays} days)`}
-      </Button>
-      <div className="flex items-center gap-2">
-        <Button
-          variant="destructive"
-          size="sm"
-          className="bg-red-600 hover:bg-red-700 text-white rounded-md"
-          onClick={() =>
-            handleRejection(selectedLeave._id, "hod")
-          }
-          disabled={
-            loading || selectedLeave.status.hod !== "Pending"
-          }
-        >
-          Reject
-        </Button>
-      </div>
-    </div>
-  </div>
-)}
-        {["HOD", "Admin", "CEO"].includes(user?.loginType) &&
-          viewMode !== "own" && (
-            <div className="mt-4 flex gap-2">
-              {user.loginType === "CEO" &&
-                ["Approved", "Submitted"].includes(
-                  selectedLeave.status.hod
-                ) &&
-                selectedLeave?.status?.ceo === "Pending" && (
-                  <>
-                    <Button
-                      variant="default"
-                      size="sm"
-                      className="bg-green-600 hover:bg-green-700 text-white rounded-md"
-                      onClick={() =>
-                        triggerConfirmation(
-                          selectedLeave._id,
-                          "Approved",
-                          "ceo"
-                        )
-                      }
-                      disabled={
-                        loading || selectedLeave.status.ceo !== "Pending"
-                      }
-                    >
-                      Approve
-                    </Button>
-                    <Button
-                      variant="destructive"
-                      size="sm"
-                      className="bg-red-600 hover:bg-red-700 text-white rounded-md"
-                      onClick={() =>
-                        handleRejection(selectedLeave._id, "ceo")
-                      }
-                      disabled={
-                        loading || selectedLeave.status.ceo !== "Pending"
-                      }
-                    >
-                      Reject
-                    </Button>
-                  </>
-                )}
-              {user.loginType === "Admin" &&
-                selectedLeave?.status?.ceo === "Approved" &&
-                selectedLeave?.status?.admin === "Pending" && (
-                  <Button
-                    variant="default"
-                    size="sm"
-                    className="bg-green-600 hover:bg-green-700 text-white rounded-md"
-                    onClick={() =>
-                      handleApproval(
-                        selectedLeave._id,
-                        "Acknowledged",
-                        "admin"
-                      )
-                    }
-                    disabled={
-                      loading || selectedLeave.status.admin !== "Pending"
-                    }
-                  >
-                    Acknowledge
-                  </Button>
-                )}
-            {(selectedLeave?.status && selectedLeave.status.hod !== "Pending" && selectedLeave.status.hod !== "Submitted") &&
-  user.loginType === "HOD" && (
-    <span className="text-sm text-gray-500">
-    Done
-    </span>
-  )}
-             {(selectedLeave?.status && selectedLeave.status.ceo !== "Pending" && selectedLeave.status.ceo !== "Submitted") &&
-  user.loginType === "CEO" && (
-    <span className="text-sm text-gray-500">
-     
-    </span>
-  )}
-             {(selectedLeave?.status && selectedLeave.status.admin !== "Pending" && selectedLeave.status.admin !== "Submitted") &&
-  user.loginType === "Admin" && (
-    <span className="text-sm text-gray-500">
-     
-    </span>
-  )}
+        {user?.loginType === "Employee" && selectedLeave?.status && (
+          <div className="mt-4">
+            {selectedLeave.status.hod === "Approved" &&
+            selectedLeave.status.ceo === "Approved" ? (
+              <p className="text-green-600">🎉 Approved ✅</p>
+            ) : selectedLeave.status.hod === "Rejected" ||
+              selectedLeave.status.ceo === "Rejected" ||
+              selectedLeave.status.admin === "Rejected" ? (
+              <p className="text-red-600">😔 Rejected ❌</p>
+            ) : (selectedLeave.status.hod === "Pending" ||
+                selectedLeave.status.hod === "Submitted" ||
+                selectedLeave.status.ceo === "Pending" ||
+                selectedLeave.status.ceo === "Submitted") && (
+              <p className="text-yellow-600">⏳ Pending</p>
+            )}
+          </div>
+        )}
+        {user.loginType === "HOD" && selectedLeave?.status?.hod === "Pending" && (
+          <div className="mt-4 flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <Label
+                htmlFor={`adjustedDays-${selectedLeave?._id}`}
+                className="text-sm font-medium"
+              >
+                Approved Days
+              </Label>
+              <Input
+                id={`adjustedDays-${selectedLeave?._id}`}
+                type="number"
+                min="0"
+                max={getLeaveDuration?.(selectedLeave) || 0}
+                value={
+                  leaveAdjustments?.[selectedLeave?._id]?.adjustedDays ??
+                  getLeaveDuration?.(selectedLeave) ??
+                  0
+                }
+                onChange={(e) =>
+                  handleAdjustmentChange?.(
+                    selectedLeave?._id,
+                    "adjustedDays",
+                    e.target.value ? parseFloat(e.target.value) : null,
+                    getLeaveDuration?.(selectedLeave) || 0
+                  )
+                }
+                className="border-gray-300 focus:ring-blue-500 focus:border-blue-500 rounded-md w-24"
+                aria-label={`Adjust days for ${selectedLeave?.leaveType || "leave"} ${selectedLeave?._id}`}
+              />
             </div>
+            {leaveAdjustments?.[selectedLeave?._id]?.adjustedDays !== undefined &&
+              leaveAdjustments[selectedLeave?._id]?.adjustedDays <
+                (getLeaveDuration?.(selectedLeave) || 0) && (
+                <div className="flex flex-col gap-2">
+                  <Label className="text-sm font-medium">
+                    Approval Time Frame
+                  </Label>
+                  <div className="border p-2 rounded-md bg-white shadow-sm">
+                    {getLeaveDates?.(selectedLeave)
+                      ?.filter((date) => {
+                        const jsDate = new Date(date);
+                        return (
+                          jsDate instanceof Date &&
+                          !isNaN(jsDate) &&
+                          jsDate.getDay() !== 0 &&
+                          !yearlyHolidays?.includes(date)
+                        );
+                      })
+                      ?.map((date) => {
+                        const approvedDates =
+                          leaveAdjustments?.[selectedLeave?._id]?.approvedDates ||
+                          [];
+                        const adjustedDays =
+                          leaveAdjustments?.[selectedLeave?._id]?.adjustedDays ||
+                          0;
+                        const isSelected = approvedDates.includes(date);
+                        const canSelectMore =
+                          approvedDates.length < adjustedDays;
+                        return (
+                          <div key={date} className="flex items-center gap-2 mb-1">
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              disabled={!isSelected && !canSelectMore}
+                              onChange={() => {
+                                const newDates = isSelected
+                                  ? approvedDates.filter((d) => d !== date)
+                                  : [...approvedDates, date];
+                                if (newDates.length > adjustedDays) return;
+                                handleAdjustmentChange?.(
+                                  selectedLeave?._id,
+                                  "approvedDates",
+                                  newDates,
+                                  getLeaveDuration?.(selectedLeave) || 0
+                                );
+                              }}
+                              id={`date-${selectedLeave?._id}-${date}`}
+                              aria-label={`Select ${formatISTDate?.(date) || date} for ${selectedLeave?.leaveType || "leave"}`}
+                            />
+                            <span>{formatISTDate?.(date) || date}</span>
+                          </div>
+                        );
+                      })}
+                    <div className="text-sm text-gray-500 mt-1">
+                      {leaveAdjustments?.[selectedLeave?._id]?.approvedDates
+                        ?.length || 0}/{leaveAdjustments?.[selectedLeave?._id]
+                        ?.adjustedDays || 0} days selected
+                    </div>
+                  </div>
+                </div>
+              )}
+            <div className="flex gap-2 items-center">
+              <Button
+                variant="default"
+                size="sm"
+                className="bg-green-600 hover:bg-green-700 text-white rounded-md disabled:opacity-50"
+                onClick={() =>
+                  triggerConfirmation?.(
+                    selectedLeave?._id,
+                    "Approved",
+                    "hod",
+                    "",
+                    leaveAdjustments?.[selectedLeave?._id]?.adjustedDays ??
+                      getLeaveDuration?.(selectedLeave) ??
+                      0,
+                    leaveAdjustments?.[selectedLeave?._id]?.approvedDates || []
+                  )
+                }
+                disabled={
+                  loading ||
+                  selectedLeave?.status?.hod !== "Pending" ||
+                  (leaveAdjustments?.[selectedLeave?._id]?.adjustedDays ?? 0) === 0
+                }
+                aria-label={`Approve ${selectedLeave?.leaveType || "leave"} ${selectedLeave?._id} for ${selectedLeave?.name}`}
+              >
+                Approve
+                {leaveAdjustments?.[selectedLeave?._id]?.adjustedDays !==
+                  undefined &&
+                  ` (${leaveAdjustments[selectedLeave?._id].adjustedDays} days)`}
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                className="bg-red-600 hover:bg-red-700 text-white rounded-md disabled:opacity-50"
+                onClick={() => handleRejection?.(selectedLeave?._id, "hod")}
+                disabled={
+                  loading || selectedLeave?.status?.hod !== "Pending"
+                }
+                aria-label={`Reject ${selectedLeave?.leaveType || "leave"} ${selectedLeave?._id} for ${selectedLeave?.name}`}
+              >
+                Reject
+              </Button>
+            </div>
+          </div>
+        )}
+        {user.loginType === "CEO" &&
+          ["Approved", "Submitted"].includes(selectedLeave?.status?.hod) &&
+          selectedLeave?.status?.ceo === "Pending" && (
+            <div className="mt-4 flex flex-col gap-4">
+              <div className="flex items-center gap-2">
+                <Label
+                  htmlFor={`adjustedDays-${selectedLeave?._id}`}
+                  className="text-sm font-medium"
+                >
+                  Approved Days
+                </Label>
+                <Input
+                  id={`adjustedDays-${selectedLeave?._id}`}
+                  type="number"
+                  min="0"
+                  max={
+                    selectedLeave?.approvedDates?.length ||
+                    leaveAdjustments?.[selectedLeave?._id]?.approvedDates?.length ||
+                    leaveAdjustments?.[selectedLeave?._id]?.adjustedDays ||
+                    getLeaveDuration?.(selectedLeave) ||
+                    0
+                  }
+                  value={
+                    leaveAdjustments?.[selectedLeave?._id]?.adjustedDays ??
+                    selectedLeave?.approvedDates?.length ??
+                    leaveAdjustments?.[selectedLeave?._id]?.approvedDates?.length ??
+                    leaveAdjustments?.[selectedLeave?._id]?.adjustedDays ??
+                    getLeaveDuration?.(selectedLeave) ??
+                    0
+                  }
+                  onChange={(e) =>
+                    handleAdjustmentChange?.(
+                      selectedLeave?._id,
+                      "adjustedDays",
+                      e.target.value ? parseFloat(e.target.value) : null,
+                      selectedLeave?.approvedDates?.length ||
+                        leaveAdjustments?.[selectedLeave?._id]?.approvedDates
+                          ?.length ||
+                        leaveAdjustments?.[selectedLeave?._id]?.adjustedDays ||
+                        getLeaveDuration?.(selectedLeave) ||
+                        0
+                    )
+                  }
+                  className="border-gray-300 focus:ring-blue-500 focus:border-blue-500 rounded-md w-24"
+                  aria-label={`Adjust days for ${selectedLeave?.leaveType || "leave"} ${selectedLeave?._id}`}
+                />
+              </div>
+              {leaveAdjustments?.[selectedLeave?._id]?.adjustedDays !==
+                undefined &&
+                leaveAdjustments[selectedLeave?._id]?.adjustedDays <
+                  (selectedLeave?.approvedDates?.length ||
+                    leaveAdjustments?.[selectedLeave?._id]?.approvedDates?.length ||
+                    getLeaveDuration?.(selectedLeave) ||
+                    0) && (
+                  <div className="flex flex-col gap-2">
+                    {/* single non composite leave (ceo side) */}
+                    <Label className="text-sm font-medium">
+                      Approval Time Frame 
+                    </Label>
+                    <div className="border p-2 rounded-md bg-white shadow-sm">
+                      {getLeaveDates?.(selectedLeave)
+                        ?.filter((date) => {
+                          const jsDate = new Date(date);
+                          return (
+                            jsDate instanceof Date &&
+                            !isNaN(jsDate) &&
+                            jsDate.getDay() !== 0 &&
+                            !yearlyHolidays?.includes(date)
+                          );
+                        })
+  ?.map((date) => {
+  const approvedDatesRaw =
+    leaveAdjustments?.[selectedLeave?._id]?.approvedDates ||
+    selectedLeave?.approvedDates ||
+    [];
+
+ const adjustedDays =
+    leaveAdjustments?.[selectedLeave?._id]?.adjustedDays || 0;
+
+  const isoDate = new Date(date).toISOString().split("T")[0];
+
+  const approvedSet = new Set(
+    approvedDatesRaw.map((d) =>
+      new Date(typeof d === "string" ? d : d?.date || d)
+        .toISOString()
+        .split("T")[0]
+    )
+  );
+
+  const rejectedSet = new Set(
+    (selectedLeave?.rejectedDates || []).map((rd) =>
+      new Date(typeof rd === "string" ? rd : rd?.date)
+        .toISOString()
+        .split("T")[0]
+    )
+  );
+
+  const isRejected = rejectedSet.has(isoDate);
+  const isSelected = approvedSet.has(isoDate);
+  const canSelectMore = approvedSet.size < adjustedDays;
+return (
+    <div key={date} className="flex items-center gap-2 mb-1">
+<input
+  type="checkbox"
+  checked={isSelected}
+  disabled={isRejected}
+  onChange={() => {
+    const currentDate = new Date(date).toISOString().split("T")[0];
+    const newDates = isSelected
+      ? approvedDatesRaw.filter((d) => {
+          const dIso = new Date(typeof d === "string" ? d : d?.date || d)
+            .toISOString()
+            .split("T")[0];
+          return dIso !== currentDate;
+        })
+      : [...approvedDatesRaw, date];
+
+    handleAdjustmentChange?.(
+      selectedLeave?._id,
+      "approvedDates",
+      newDates,
+      getLeaveDuration?.(selectedLeave) || 0
+    );
+  }}
+  id={`date-${selectedLeave?._id}-${date}`}
+  aria-label={`Select ${formatISTDate?.(date) || date} for ${
+    selectedLeave?.leaveType || "leave"
+  }`}
+/>
+      <span
+        className={`text-sm ${
+          isSelected
+            ? ""
+            : isRejected
+            ? "text-red-700 line-through font-semibold"
+            : "text-yellow-700 font-semibold"
+        }`}
+      >
+        {formatISTDate?.(date) || date}
+      </span>
+      {!isSelected && isRejected && (
+        <span className="text-xs text-red-800 font-semibold ml-1">
+          (Rejected)
+        </span>
+      )}
+      {!isSelected && !isRejected && (
+        <span className="text-xs text-yellow-600 ml-1">(Not Approved)</span>
+      )}
+    </div>
+  );
+})}
+
+
+                      <div className="text-sm text-gray-500 mt-1">
+                        {leaveAdjustments?.[selectedLeave?._id]?.approvedDates
+                          ?.length || selectedLeave?.approvedDates?.length || 0}/
+                        {leaveAdjustments?.[selectedLeave?._id]?.adjustedDays ||
+                          0} days selected
+                      </div>
+                    </div>
+                  </div>
+                )}
+              <div className="flex gap-2 items-center">
+                <Button
+                  variant="default"
+                  size="sm"
+                  className="bg-green-600 hover:bg-green-700 text-white rounded-md disabled:opacity-50"
+                  onClick={() =>
+                    triggerConfirmation?.(
+                      selectedLeave?._id,
+                      "Approved",
+                      "ceo",
+                      "",
+                      leaveAdjustments?.[selectedLeave?._id]?.adjustedDays ??
+                        selectedLeave?.approvedDates?.length ??
+                        leaveAdjustments?.[selectedLeave?._id]?.approvedDates
+                          ?.length ??
+                        leaveAdjustments?.[selectedLeave?._id]?.adjustedDays ??
+                        getLeaveDuration?.(selectedLeave) ??
+                        0,
+                      leaveAdjustments?.[selectedLeave?._id]?.approvedDates ||
+                        selectedLeave?.approvedDates ||
+                        []
+                    )
+                  }
+                  disabled={
+                    loading ||
+                    selectedLeave?.status?.ceo !== "Pending" ||
+                    (leaveAdjustments?.[selectedLeave?._id]?.adjustedDays ?? 0) ===
+                      0
+                  }
+                  aria-label={`Approve ${selectedLeave?.leaveType || "leave"} ${selectedLeave?._id} for ${selectedLeave?.name}`}
+                >
+                  Approve
+                </Button>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  className="bg-red-600 hover:bg-red-700 text-white rounded-md disabled:opacity-50"
+                  onClick={() => handleRejection?.(selectedLeave?._id, "ceo")}
+                  disabled={
+                    loading || selectedLeave?.status?.ceo !== "Pending"
+                  }
+                  aria-label={`Reject ${selectedLeave?.leaveType || "leave"} ${selectedLeave?._id} for ${selectedLeave?.name}`}
+                >
+                  Reject
+                </Button>
+              </div>
+            </div>
+          )}
+        {user.loginType === "Admin" &&
+          selectedLeave?.status?.ceo === "Approved" &&
+          selectedLeave?.status?.admin === "Pending" && (
+            <Button
+              variant="default"
+              size="sm"
+              className="bg-green-600 hover:bg-green-700 text-white rounded-md disabled:opacity-50"
+              onClick={() =>
+                handleApproval?.(
+                  selectedLeave?._id,
+                  "Acknowledged",
+                  "admin"
+                )
+              }
+              disabled={loading || selectedLeave?.status?.admin !== "Pending"}
+              aria-label={`Acknowledge ${selectedLeave?.leaveType || "leave"} ${selectedLeave?._id} for ${selectedLeave?.name}`}
+            >
+              Acknowledge
+            </Button>
+          )}
+        {(user.loginType === "HOD" &&
+          selectedLeave?.status?.hod !== "Pending" &&
+          selectedLeave?.status?.hod !== "Submitted") ||
+          (user.loginType === "CEO" &&
+            selectedLeave?.status?.ceo !== "Pending" &&
+            selectedLeave?.status?.ceo !== "Submitted") ||
+          (user.loginType === "Admin" &&
+            selectedLeave?.status?.admin !== "Pending" &&
+            selectedLeave?.status?.admin !== "Submitted") && (
+            <span className="text-sm text-gray-500">Done</span>
           )}
       </div>
     )}
@@ -2029,10 +2377,11 @@ const triggerConfirmation = (id, status, currentStage, remarks = "", days = null
 <DialogFooter className="mt-4">
   <Button
     onClick={() => {
-      setSelectedLeave(null);
-      setLeaveAdjustments({});
+      setSelectedLeave?.(null);
+      setLeaveAdjustments?.({});
     }}
     className="bg-gray-300 hover:bg-gray-400 text-gray-800 rounded-md"
+    aria-label="Close leave details dialog"
   >
     Close
   </Button>

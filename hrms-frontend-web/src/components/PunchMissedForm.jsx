@@ -28,6 +28,12 @@ function PunchMissedForm() {
   const [loading, setLoading] = useState(false);
   const [canSubmit, setCanSubmit] = useState(false);
 
+  // Calculate min and max dates for the current month only
+  const today = new Date();
+  const maxDate = today.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }); // Today in YYYY-MM-DD
+  const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+  const minDate = firstDayOfMonth.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }); // First day of current month
+
   useEffect(() => {
     const checkSubmissionLimit = async () => {
       try {
@@ -95,15 +101,31 @@ function PunchMissedForm() {
 
   return (
     <ContentLayout title="Punch Missed Form">
-      <Card className="w-full mx-auto shadow-lg border">
-        <CardContent className="p-6">
+      <Card className="w-full max-w-4xl mx-auto shadow-xl border border-gray-200 rounded-xl">
+        <CardContent className="p-8">
+          <div className="mb-6 bg-gray-100 p-4 rounded-lg">
+            <h3 className="text-lg font-semibold text-blue-800">Submission Guidelines</h3>
+            <ul className="list-disc list-inside text-sm text-gray-700 mt-2">
+              <li>You can submit only one Punch Missed Form per month.</li>
+              <li>Submissions are allowed for the current month only.</li>
+              <li>Future dates are disabled until they become current.</li>
+              <li>Ensure timely submission with accurate time information (e.g., 09:30 AM).</li>
+              <li>Ensure regular punching to prevent discrepancies and correction submissions.</li>
+            </ul>
+          </div>
           {error && (
-            <div className="mb-4 p-4 bg-red-100 text-red-700 rounded">
+            <div className="mb-6 p-4 bg-red-50 text-red-700 rounded-lg flex items-center">
+              <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+              </svg>
               {error}
             </div>
           )}
           {success && (
-            <div className="mb-4 p-4 bg-green-100 text-green-700 rounded">
+            <div className="mb-6 p-4 bg-green-50 text-green-700 rounded-lg flex items-center">
+              <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+              </svg>
               {success}
             </div>
           )}
@@ -112,22 +134,24 @@ function PunchMissedForm() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5 }}
-            className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4"
+            className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6"
           >
             <div className="flex-1 min-w-[200px]">
-              <Label htmlFor="punchMissedDate">Punch Missed Date</Label>
+              <Label htmlFor="punchMissedDate" className="text-sm font-medium text-gray-700">Punch Missed Date</Label>
               <Input
                 id="punchMissedDate"
                 name="punchMissedDate"
                 type="date"
                 value={formData.punchMissedDate}
                 onChange={(e) => handleChange('punchMissedDate', e.target.value)}
-                className="mt-1 border-gray-300 focus:ring-blue-500 focus:border-blue-500"
+                className="mt-1 border-gray-300 focus:ring-blue-500 focus:border-blue-500 rounded-md shadow-sm"
                 disabled={loading || !canSubmit}
+                min={minDate}
+                max={maxDate}
               />
             </div>
             <div className="flex-1 min-w-[200px]">
-              <Label htmlFor="when">When</Label>
+              <Label htmlFor="when" className="text-sm font-medium text-gray-700">Choose Punch Type</Label>
               <Select
                 onValueChange={(value) => handleChange('when', value)}
                 value={formData.when}
@@ -135,55 +159,55 @@ function PunchMissedForm() {
               >
                 <SelectTrigger
                   id="when"
-                  className="mt-1 border-gray-300 focus:ring-blue-500 focus:border-blue-500"
+                  className="mt-1 border-gray-300 focus:ring-blue-500 focus:border-blue-500 rounded-md shadow-sm"
                 >
                   <SelectValue placeholder="Select Time" />
                 </SelectTrigger>
-                <SelectContent className="z-50">
+                <SelectContent className="z-50 bg-white shadow-lg rounded-md">
                   <SelectItem value="Time IN">Time IN</SelectItem>
                   <SelectItem value="Time OUT">Time OUT</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             <div className="flex-1 min-w-[200px]">
-              <Label htmlFor="yourInput">Your Input (e.g., 09:30 AM)</Label>
+              <Label htmlFor="yourInput" className="text-sm font-medium text-gray-700">Your Input (e.g., 09:30 AM)</Label>
               <Input
                 id="yourInput"
                 name="yourInput"
                 value={formData.yourInput}
                 onChange={(e) => handleChange('yourInput', e.target.value)}
                 placeholder="Enter time (e.g., 09:30 AM)"
-                className="mt-1 border-gray-300 focus:ring-blue-500 focus:border-blue-500"
+                className="mt-1 border-gray-300 focus:ring-blue-500 focus:border-blue-500 rounded-md shadow-sm"
                 disabled={loading || !canSubmit}
               />
             </div>
             <div className="flex-1 min-w-[200px]">
-              <Label htmlFor="reason">Reason</Label>
+              <Label htmlFor="reason" className="text-sm font-medium text-gray-700">Reason</Label>
               <Input
                 id="reason"
                 name="reason"
                 value={formData.reason}
                 onChange={(e) => handleChange('reason', e.target.value)}
                 placeholder="Enter reason for missing punch"
-                className="mt-1 border-gray-300 focus:ring-blue-500 focus:border-blue-500"
+                className="mt-1 border-gray-300 focus:ring-blue-500 focus:border-blue-500 rounded-md shadow-sm"
                 disabled={loading || !canSubmit}
               />
             </div>
             <div className="flex-1 min-w-[200px]">
-              <Label htmlFor="adminInput">Admin Input</Label>
+              <Label htmlFor="adminInput" className="text-sm font-medium text-gray-700">Admin Input</Label>
               <Input
                 id="adminInput"
                 name="adminInput"
                 value=""
                 readOnly
-                className="mt-1 border-gray-300 bg-gray-100 cursor-not-allowed"
+                className="mt-1 border-gray-300 bg-gray-100 cursor-not-allowed rounded-md shadow-sm"
                 placeholder="To be filled by Admin"
               />
             </div>
-            <div className="flex gap-2 items-end">
+            <div className="flex gap-4 items-end">
               <Button
                 type="submit"
-                className="px-4 py-2 bg-blue-600 text-white"
+                className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
                 disabled={loading || !canSubmit}
               >
                 {loading ? 'Submitting...' : 'Submit'}

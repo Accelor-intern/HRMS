@@ -112,7 +112,7 @@ const employeeSchema = new mongoose.Schema({
   lastPunchMissedSubmission: { type: Date }, // Tracks last Punch Missed Form submission
     shift: { 
     type: String, 
-    enum: ['General (09:00-17:30)', 'Shift A (06:00-14:30)', 'Shift B (14:00-22:30)','Shift C (22:00-06:30)','Regular'], 
+    enum: ['General (09:00-17:30)', 'Shift A (06:00-14:30)', 'Shift B (14:00-22:30)','Shift C (22:00-06:30)','Regular', 'C Shift', 'A Shift', 'B Shift', 'General'], 
     default: 'General (09:00-17:30)' 
   }, // Shift assignment: Regular (9:00 AM–5:30 PM), B Shift (2:00 PM–10:30 PM), C Shift (10:00 PM–6:30 AM)
     shiftEffectiveFrom: { type: Date, default: Date.now }, // Effective date of shift assignment

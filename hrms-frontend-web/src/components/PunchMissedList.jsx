@@ -126,49 +126,69 @@ function PunchMissedList() {
     setDialogOpen(true);
   };
 
-  const handleApprove = async () => {
-    if (!selectedForm) return;
-    if (
-      user.loginType === 'Admin' &&
-      !/^(0?[1-9]|1[0-2]):[0-5][0-9] (AM|PM)$/i.test(adminInput)
-    ) {
-      setError('Admin Input must be in valid time format (e.g., 09:30 AM).');
-      return;
-    }
-    setLoading(true);
-    try {
-      await api.put(`/punch-missed/${selectedForm._id}/approve`, {
-        adminInput: user.loginType === 'Admin' ? adminInput : undefined,
-        action: 'approve',
-      });
-      setDialogOpen(false);
-      setSelectedForm(null);
-      setAdminInput('');
-      fetchPunchMissedForms(filters);
-    } catch (err) {
-      setError(err.response?.data?.message || 'Failed to approve form');
-    } finally {
-      setLoading(false);
-    }
-  };
+const handleSaveInput = async () => {
+  if (!selectedForm || !/^(0?[1-9]|1[0-2]):[0-5][0-9] (AM|PM)$/i.test(adminInput)) {
+    setError('Please enter a valid time format (e.g., 09:30 AM).');
+    return;
+  }
+  setLoading(true);
+  try {
+    const response = await api.put(`/punch-missed/${selectedForm._id}`, {
+      adminInput: adminInput,
+    });
+    setSelectedForm({ ...selectedForm, adminInput: response.data.punchMissed.adminInput });
+    setError(null);
+  } catch (err) {
+    setError(err.response?.data?.message || 'Failed to save admin input');
+  } finally {
+    setLoading(false);
+  }
+};
 
-  const handleReject = async () => {
-    if (!selectedForm) return;
-    setLoading(true);
-    try {
-      await api.put(`/punch-missed/${selectedForm._id}/approve`, {
-        action: 'reject',
-      });
-      setDialogOpen(false);
-      setSelectedForm(null);
-      setAdminInput('');
-      fetchPunchMissedForms(filters);
-    } catch (err) {
-      setError(err.response?.data?.message || 'Failed to reject form');
-    } finally {
-      setLoading(false);
-    }
-  };
+const handleApprove = async (form) => {
+  if (!form) return;
+  if (
+    user.loginType === 'Admin' &&
+    !form.adminInput &&
+    !/^(0?[1-9]|1[0-2]):[0-5][0-9] (AM|PM)$/i.test(adminInput)
+  ) {
+    setError('Please save a valid admin input before approving.');
+    return;
+  }
+  setLoading(true);
+  try {
+    await api.put(`/punch-missed/${form._id}/approve`, {
+      status: 'Approved',
+      adminInput: user.loginType === 'Admin' ? (form.adminInput || adminInput) : undefined,
+    });
+    setDialogOpen(false);
+    setSelectedForm(null);
+    setAdminInput('');
+    fetchPunchMissedForms(filters);
+  } catch (err) {
+    setError(err.response?.data?.message || 'Failed to approve form');
+  } finally {
+    setLoading(false);
+  }
+};
+
+const handleReject = async (form) => {
+  if (!form) return;
+  setLoading(true);
+  try {
+    await api.put(`/punch-missed/${form._id}/approve`, {
+      status: 'Rejected',
+    });
+    setDialogOpen(false);
+    setSelectedForm(null);
+    setAdminInput('');
+    fetchPunchMissedForms(filters);
+  } catch (err) {
+    setError(err.response?.data?.message || 'Failed to reject form');
+  } finally {
+    setLoading(false);
+  }
+};
 
   const formatDateDisplay = (dateStr) => {
     const date = new Date(dateStr);
@@ -179,23 +199,24 @@ function PunchMissedList() {
     });
   };
 
-  const canApproveOrReject = (form) => {
-    if (user.loginType === 'HOD' && form.status.hod === 'Pending') return true;
-    if (
-      user.loginType === 'Admin' &&
-      ["Approved", "Submitted"].includes(form.status.hod) &&
-      form.status.admin === 'Pending'
-    )
-      return true;
-    if (
-      user.loginType === 'CEO' &&
-      ["Approved", "Submitted"].includes(form.status.hod) &&
-      form.status.admin === 'Approved' &&
-      form.status.ceo === 'Pending'
-    )
-      return true;
-    return false;
-  };
+const canApproveOrReject = (form) => {
+  if (!form) return false; // Safety check for null/undefined forms
+  if (user.loginType === 'HOD' && form.status.hod === 'Pending') return true;
+  if (
+    user.loginType === 'Admin' &&
+    ["Approved", "Submitted"].includes(form.status.hod) &&
+    form.status.admin === 'Pending'
+  )
+    return true;
+  if (
+    user.loginType === 'CEO' &&
+    ["Approved", "Submitted"].includes(form.status.hod) &&
+    form.status.admin === 'Approved' &&
+    form.status.ceo === 'Pending'
+  )
+    return true;
+  return false;
+};
 
   const hodDepartmentName =
     user?.loginType === 'HOD' && user?.department
@@ -204,7 +225,7 @@ function PunchMissedList() {
       : '';
 
   return (
-    <ContentLayout title="Punch Missed Forms">
+    <ContentLayout title="Punch Missed List">
       <Card className="w-full mx-auto shadow-lg border">
         <CardContent className="p-6">
           {error && (
@@ -319,7 +340,7 @@ function PunchMissedList() {
                       <TableHead className="font-semibold">Employee ID</TableHead>
                       <TableHead className="font-semibold">Name</TableHead>
                       <TableHead className="font-semibold">Date</TableHead>
-                      <TableHead className="font-semibold">When</TableHead>
+                      <TableHead className="font-semibold">Punch Type</TableHead>
                       <TableHead className="font-semibold">Your Input</TableHead>
                       <TableHead className="font-semibold">Admin Input</TableHead>
                       <TableHead className="font-semibold">View</TableHead>
@@ -329,54 +350,49 @@ function PunchMissedList() {
                       <TableHead className="font-semibold">Action</TableHead>
                     </TableRow>
                   </TableHeader>
-                  <TableBody>
-                    {punchMissedForms.map((form) => (
-                      <TableRow key={form._id} className="hover:bg-gray-50">
-                        <TableCell>{form.employeeId}</TableCell>
-                        <TableCell>{form.name}</TableCell>
-                        <TableCell>{formatDateDisplay(form.punchMissedDate)}</TableCell>
-                        <TableCell>{form.when}</TableCell>
-                        <TableCell>{form.yourInput}</TableCell>
-                        <TableCell>{form.adminInput || '-'}</TableCell>
-                        <TableCell>
-                          <Button
-                            onClick={() => handleView(form)}
-                            className="bg-blue-600 hover:bg-blue-700 text-white"
-                            disabled={!canApproveOrReject(form)}
-                          >
-                            View
-                          </Button>
-                        </TableCell>
-                        <TableCell>{form.status.hod}</TableCell>
-                        <TableCell>{form.status.admin}</TableCell>
-                        <TableCell>{form.status.ceo}</TableCell>
-                        <TableCell>
-                          {canApproveOrReject(form) && (
-                            <div className="flex gap-2">
-                              <Button
-                                onClick={handleApprove}
-                                className="bg-green-600 hover:bg-green-700 text-white"
-                                disabled={
-                                  loading ||
-                                  (user.loginType === 'Admin' &&
-                                    !adminInput.match(/^(0?[1-9]|1[0-2]):[0-5][0-9] (AM|PM)$/i))
-                                }
-                              >
-                                Approve
-                              </Button>
-                              <Button
-                                onClick={handleReject}
-                                className="bg-red-600 hover:bg-red-700 text-white"
-                                disabled={loading}
-                              >
-                                Reject
-                              </Button>
-                            </div>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
+<TableBody>
+  {punchMissedForms.map((form) => (
+    <TableRow key={form._id} className="hover:bg-gray-50">
+      <TableCell>{form.employeeId}</TableCell>
+      <TableCell>{form.name}</TableCell>
+      <TableCell>{formatDateDisplay(form.punchMissedDate)}</TableCell>
+      <TableCell>{form.when}</TableCell>
+      <TableCell>{form.yourInput}</TableCell>
+      <TableCell>{form.adminInput || '-'}</TableCell>
+      <TableCell>
+        <Button
+          onClick={() => handleView(form)}
+          className="bg-blue-600 hover:bg-blue-700 text-white"
+        >
+          View
+        </Button>
+      </TableCell>
+      <TableCell>{form.status.hod}</TableCell>
+      <TableCell>{form.status.admin}</TableCell>
+      <TableCell>{form.status.ceo}</TableCell>
+      <TableCell>
+        {canApproveOrReject(form) && (
+          <div className="flex gap-2">
+            <Button
+              onClick={() => handleApprove(form)}
+              className="bg-green-600 hover:bg-green-700 text-white"
+              disabled={loading}
+            >
+              Approve
+            </Button>
+            <Button
+              onClick={() => handleReject(form)}
+              className="bg-red-600 hover:bg-red-700 text-white"
+              disabled={loading}
+            >
+              Reject
+            </Button>
+          </div>
+        )}
+      </TableCell>
+    </TableRow>
+  ))}
+</TableBody>
                 </Table>
               </div>
               <Pagination
@@ -413,7 +429,7 @@ function PunchMissedList() {
                     </span>
                   </div>
                   <div className="grid grid-cols-4 items-center gap-4">
-                    <Label className="text-right">When</Label>
+                    <Label className="text-right">Punch Type</Label>
                     <span className="col-span-3">{selectedForm.when}</span>
                   </div>
                   <div className="grid grid-cols-4 items-center gap-4">
@@ -437,14 +453,23 @@ function PunchMissedList() {
                     )}
                   </div>
                 </div>
-                <DialogFooter>
-                  <Button
-                    onClick={() => setDialogOpen(false)}
-                    className="bg-gray-600 hover:bg-gray-700 text-white"
-                  >
-                    Close
-                  </Button>
-                </DialogFooter>
+          <DialogFooter>
+  {user.loginType === 'Admin' && selectedForm.status.admin === 'Pending' && (
+    <Button
+      onClick={handleSaveInput}
+      className="bg-blue-600 hover:bg-blue-700 text-white mr-2"
+      disabled={loading || !adminInput || !/^(0?[1-9]|1[0-2]):[0-5][0-9] (AM|PM)$/i.test(adminInput)}
+    >
+      Save
+    </Button>
+  )}
+  <Button
+    onClick={() => setDialogOpen(false)}
+    className="bg-gray-600 hover:bg-gray-700 text-white"
+  >
+    Close
+  </Button>
+</DialogFooter>
               </DialogContent>
             </Dialog>
           )}

@@ -222,6 +222,24 @@ setData((prevData) => ({
     );
   }
 
+    const highlightStatus = (status) => {
+    if (!status) return "-";
+    const parts = status.split(" & ");
+    return (
+      <div>
+        {parts.map((part, index) => (
+          <div key={index}>
+            {part.split(/(\s+)/).map((subPart, i) =>
+              subPart === "FN:" || subPart === "AN:"
+                ? <strong key={`${index}-${i}`}>{subPart}</strong>
+                : subPart
+            )}
+          </div>
+        ))}
+      </div>
+    );
+  };
+
   const filteredAttendance = data.employeeAttendance.filter(emp =>
     emp.name.toLowerCase().includes(searchTerm.toLowerCase())
   );
@@ -246,7 +264,7 @@ if (user.employeeType === 'Confirmed') {
    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6 justify-items-center w-full max-w-[1200px] mb-8">
 
   {/* Casual Leave */}
-  <Card className="w-full h-40 bg-gradient-to-br from-blue-100 to-blue-200 shadow-md hover:shadow-lg transition-shadow">
+  <Card className="w-full h-50 bg-gradient-to-br from-blue-100 to-blue-200 shadow-md hover:shadow-lg transition-shadow">
     <CardHeader className="p-4">
       <CardTitle className="text-lg font-semibold text-blue-900">Casual Leave</CardTitle>
     </CardHeader>
@@ -256,6 +274,9 @@ if (user.employeeType === 'Confirmed') {
           <p className="text-2xl font-bold text-blue-700">
             Availed: {12 - data.paidLeavesRemaining.monthly}
           </p>
+          <p className="text-md  text-blue-700">
+            Allowed: 12
+          </p>
           <p className="text-md text-blue-600">Balance: {data.paidLeavesRemaining.monthly}/12</p>
         </>
       ) : (
@@ -263,6 +284,7 @@ if (user.employeeType === 'Confirmed') {
           <p className="text-2xl font-bold text-blue-700">
             Availed: {1 - data.paidLeavesRemaining.monthly}
           </p>
+          <p className="text-md  text-blue-600">Allowed: 1</p>
           <p className="text-md text-blue-600">Balance: {data.paidLeavesRemaining.monthly}/1</p>
         </>
       )}
@@ -271,12 +293,13 @@ if (user.employeeType === 'Confirmed') {
 
   {/* Medical Leave (only if Confirmed) */}
   {user.employeeType === 'Confirmed' && (
-    <Card className="w-full h-40 bg-gradient-to-br from-green-100 to-green-200 shadow-md hover:shadow-lg transition-shadow">
+    <Card className="w-full h-50 bg-gradient-to-br from-green-100 to-green-200 shadow-md hover:shadow-lg transition-shadow">
       <CardHeader className="p-4">
         <CardTitle className="text-lg font-semibold text-green-900">Medical Leave</CardTitle>
       </CardHeader>
       <CardContent className="p-4 text-center">
         <p className="text-2xl font-bold text-green-700">Availed: {7 - data.medicalLeaves}</p>
+        <p className="text-md  text-green-600">Allowed: [3, 4, 7]</p>
         <p className="text-md text-green-600">Balance: {data.medicalLeaves}/7</p>
       </CardContent>
     </Card>
@@ -284,19 +307,20 @@ if (user.employeeType === 'Confirmed') {
 
   {/* Restricted Holiday (only if Confirmed) */}
   {user.employeeType === 'Confirmed' && (
-    <Card className="w-full h-40 bg-gradient-to-br from-yellow-100 to-yellow-200 shadow-md hover:shadow-lg transition-shadow">
+    <Card className="w-full h-50 bg-gradient-to-br from-yellow-100 to-yellow-200 shadow-md hover:shadow-lg transition-shadow">
       <CardHeader className="p-4">
         <CardTitle className="text-lg font-semibold text-yellow-900">Restricted Holiday</CardTitle>
       </CardHeader>
       <CardContent className="p-4 text-center">
         <p className="text-2xl font-bold text-yellow-700">Availed: {1 - data.restrictedHolidays}</p>
+        <p className="text-md text-yellow-600">Allowed: 1</p>
         <p className="text-md text-yellow-600">Balance: {data.restrictedHolidays}/1</p>
       </CardContent>
     </Card>
   )}
 
   {/* Unpaid Leave */}
-  <Card className="w-full h-40 bg-gradient-to-br from-purple-100 to-purple-200 shadow-md hover:shadow-lg transition-shadow">
+  <Card className="w-full h-50 bg-gradient-to-br from-purple-100 to-purple-200 shadow-md hover:shadow-lg transition-shadow">
     <CardHeader className="p-4">
       <CardTitle className="text-lg font-semibold text-purple-900">Unpaid Leave (LWP)</CardTitle>
     </CardHeader>
@@ -306,7 +330,7 @@ if (user.employeeType === 'Confirmed') {
   </Card>
 
   {/* Compensatory Leave (always visible) */}
-  <Card className="w-full h-40 bg-gradient-to-br from-teal-100 to-teal-200 shadow-md hover:shadow-lg transition-shadow">
+  <Card className="w-full h-50 bg-gradient-to-br from-teal-100 to-teal-200 shadow-md hover:shadow-lg transition-shadow">
     <CardHeader className="p-4">
       <CardTitle className="text-lg font-semibold text-teal-900">Compensatory Leave</CardTitle>
     </CardHeader>
@@ -320,7 +344,7 @@ if (user.employeeType === 'Confirmed') {
 
 {/* Conditionally show Clock Card if cardCount < 5 */}
   {cardCount < 5 && (
-    <Card className="col-span-2 w-full h-40 bg-gradient-to-br from-gray-200 to-gray-200 shadow-md hover:shadow-lg transition-shadow">
+    <Card className="col-span-2 w-full h-50 bg-gradient-to-br from-gray-200 to-gray-200 shadow-md hover:shadow-lg transition-shadow">
       <CardContent className="p-4 h-full w-full flex flex-row items-center justify-around">
         
         {/* Analog Clock */}
@@ -374,6 +398,7 @@ if (user.employeeType === 'Confirmed') {
                     <TableHead className="py-2 px-4 text-left text-gray-600">Name</TableHead>
                     <TableHead className="py-2 px-4 text-left text-gray-600">Department</TableHead>
                     <TableHead className="py-2 px-4 text-left text-gray-600">LogIn Time</TableHead>
+
                     <TableHead className="py-2 px-4 text-left text-gray-600">Status</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -390,7 +415,10 @@ if (user.employeeType === 'Confirmed') {
   {emp.logInTime ? emp.logInTime : '-'}
 </TableCell>
 
-        <TableCell className="py-2 px-4">{emp.status}</TableCell>
+         <TableCell>
+                                  {highlightStatus(emp.status)}
+                                  {emp.halfDay ? ` (${emp.halfDay})` : ""}
+                                </TableCell>
       </TableRow>
     ))
   ) : (

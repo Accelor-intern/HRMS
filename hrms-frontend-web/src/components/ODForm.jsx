@@ -15,16 +15,12 @@ function ODForm() {
   const { user } = useContext(AuthContext);
 
   const getCurrentDate = () => new Date().toISOString().split("T")[0];
-  const getCurrentTime = () => {
-    const now = new Date();
-    return now.toTimeString().slice(0, 5);
-  };
 
   const [form, setForm] = useState({
     dateOut: getCurrentDate(),
-    timeOut: getCurrentTime(),
+    timeOut: '09:00', // Default for Single Day OD
     dateIn: getCurrentDate(),
-    timeIn: '',
+    timeIn: '17:30', // Default for Single Day OD
     numberOfDays: '',
     purpose: '',
     placeUnitVisit: '',
@@ -33,13 +29,29 @@ function ODForm() {
 
   const [submitting, setSubmitting] = useState(false);
   const [quote, setQuote] = useState('');
-  const [isSingleDay, setIsSingleDay] = useState(null);
+  const [tripType, setTripType] = useState(null); // Changed from isSingleDay to tripType for clarity
 
   const quotes = [
     { text: "Success is where preparation and opportunity meet.", author: "Bobby Unser" },
     { text: "The only way to do great work is to love what you do.", author: "Steve Jobs" },
     { text: "Productivity is never an accident. It is always the result of a commitment to excellence.", author: "Paul J. Meyer" },
     { text: "Time is the most valuable thing a man can spend.", author: "Theophrastus" },
+    { text: "Find your calm.", author: "Gabi Garcia" },
+    { text: "A person is but the product of their thoughts. What they think, they become.", author: "Mahatma Gandhi" },
+    { text: "All great achievements require time.", author: "Maya Angelou" },
+    { text: "There are only two ways to live your life. One is as though nothing is a miracle. The other is as though everything is a miracle.", author: "Albert Einstein" },
+    { text: "Low self esteem is like driving through life with your handbrake on.", author: "Maxwell Maltz" },
+    { text: "Do more with less.", author: "Johit Joe" },
+    { text: "Life shrinks or expands in proportion with one’s courage.", author: "Anais Nin" },
+    { text: "What do you do with a mistake: recognize it, admit it, learn from it, forget it.", author: "Dean Smith" },
+    { text: "If you are always trying to be normal you will never know how amazing you can be.", author: "Maya Angelou" },
+    { text: "Perfection is not attainable, but if we chase perfection, we can catch excellence.", author: "Vince Lombardi" },
+    { text: "Showing off is the fool's idea of glory.", author: "Bruce Lee" },
+    { text: "Remember that failure is an event, not a person.", author: "Zig Ziglar" },
+    { text: "Adapt what is useful, reject what is useless, and add what is specifically your own.", author: "Bruce Lee" },
+    { text: "Inside of every problem lies an opportunity.", author: "Robert Kiyosaki" },
+    { text: "Nobody ever got ready by waiting. You only get ready by starting.", author: "John C. Maxwell" },
+    { text: "Never let success get to your head, and never let failure get to your heart.", author: "Drake" },
   ];
 
   useEffect(() => {
@@ -51,8 +63,8 @@ function ODForm() {
     const { name, value } = e.target;
     let updatedForm = { ...form, [name]: value };
 
-    // Calculate Date In based on No. of Days for multiple days
-    if (isSingleDay === false && name === 'numberOfDays' && value) {
+    // For Multiple Days OD: Calculate Date In based on Number of Days
+    if (tripType === 'multiple' && name === 'numberOfDays' && value) {
       const days = parseInt(value);
       if (!isNaN(days) && days > 0 && updatedForm.dateOut) {
         const dateOut = new Date(updatedForm.dateOut);
@@ -63,13 +75,13 @@ function ODForm() {
       }
     }
 
-    // Set Date In same as Date Out for single day
-    if (isSingleDay === true && name === 'dateOut') {
+    // For Single Day OD and Hour-Based OD: Set Date In same as Date Out
+    if ((tripType === 'single' || tripType === 'hour') && name === 'dateOut') {
       updatedForm.dateIn = value;
     }
 
-    // Calculate Time In based on Estimated Time for single-day trips
-    if (isSingleDay === true && (name === 'estimatedTime' || name === 'timeOut') && updatedForm.estimatedTime && updatedForm.timeOut) {
+    // For Hour-Based OD: Calculate Time In based on Estimated Time
+    if (tripType === 'hour' && (name === 'estimatedTime' || name === 'timeOut') && updatedForm.estimatedTime && updatedForm.timeOut) {
       const [hours, minutes] = updatedForm.timeOut.split(':').map(Number);
       const estimatedHours = parseFloat(updatedForm.estimatedTime);
       if (!isNaN(estimatedHours)) {
@@ -85,30 +97,31 @@ function ODForm() {
     setForm(updatedForm);
   };
 
-  const handleTripTypeChange = (isSingle) => {
-    setIsSingleDay(isSingle);
-    setForm({
+  const handleTripTypeChange = (type) => {
+    setTripType(type);
+    const baseForm = {
       dateOut: getCurrentDate(),
-      timeOut: getCurrentTime(),
+      timeOut: type === 'single' ? '09:00' : getCurrentDate(),
       dateIn: getCurrentDate(),
-      timeIn: '',
+      timeIn: type === 'single' ? '17:30' : '',
       numberOfDays: '',
       purpose: '',
       placeUnitVisit: '',
       estimatedTime: '',
-    });
+    };
+    setForm(baseForm);
   };
 
   const validateForm = () => {
-    if (isSingleDay === null) return 'Please select trip type (Single Day or Multiple Days)';
+    if (tripType === null) return 'Please select trip type';
     if (!form.dateOut) return 'Date Out is required';
     if (!form.timeOut) return 'Time Out is required';
-    if (isSingleDay === false && !form.numberOfDays) return 'Number of Days is required';
-    if (isSingleDay === false && form.dateOut && form.dateIn && new Date(form.dateOut) > new Date(form.dateIn)) {
+    if (tripType === 'multiple' && !form.numberOfDays) return 'Number of Days is required';
+    if (tripType === 'multiple' && form.dateOut && form.dateIn && new Date(form.dateOut) > new Date(form.dateIn)) {
       return 'Date Out must be before or equal to Date In';
     }
-    if (isSingleDay === true && !form.estimatedTime) {
-      return 'Estimated Time is required for single-day trips';
+    if (tripType === 'hour' && !form.estimatedTime) {
+      return 'Estimated Time is required for hour-based trips';
     }
     if (!form.purpose) return 'Purpose is required';
     if (!form.placeUnitVisit) return 'Place/Unit Visit is required';
@@ -128,26 +141,27 @@ function ODForm() {
         dateOut: form.dateOut,
         timeOut: form.timeOut,
         dateIn: form.dateIn,
-        timeIn: isSingleDay ? form.timeIn : null,
-        numberOfDays: isSingleDay ? null : form.numberOfDays,
+        timeIn: tripType === 'multiple' ? null : form.timeIn,
+        numberOfDays: tripType === 'multiple' ? form.numberOfDays : null,
         purpose: form.purpose,
         placeUnitVisit: form.placeUnitVisit,
-        estimatedTime: isSingleDay ? form.estimatedTime : null,
+        estimatedTime: tripType === 'hour' ? form.estimatedTime : null,
         user: user.id,
+        tripType, // Include tripType in the submission
       };
       await api.post('/od', odData);
       alert('OD request submitted successfully');
       setForm({
         dateOut: getCurrentDate(),
-        timeOut: getCurrentTime(),
+        timeOut: tripType === 'single' ? '09:00' : getCurrentDate(),
         dateIn: getCurrentDate(),
-        timeIn: '',
+        timeIn: tripType === 'single' ? '17:30' : '',
         numberOfDays: '',
         purpose: '',
         placeUnitVisit: '',
         estimatedTime: '',
       });
-      setIsSingleDay(null);
+      setTripType(null);
     } catch (err) {
       console.error('OD submit error:', err.response?.data || err.message);
       const errorMessage = err.response?.data?.message || 'An error occurred while submitting the OD request';
@@ -219,32 +233,38 @@ function ODForm() {
   };
 
   return (
-    <ContentLayout title="Apply for OD">
-      {isSingleDay === null ? (
-     <div className="flex items-center justify-center min-h-[500px] bg-white">
-  <Card className="shadow-2xl border border-gray-100 max-w-lg w-full rounded-3xl overflow-hidden bg-gradient-to-br from-gray-50 via-white to-gray-50 transition-transform duration-300 hover:scale-[1.02]">
-    <CardContent className="p-10 text-center">
-      <h2 className="text-3xl font-extrabold text-indigo-800 mb-4 tracking-tight">Select OD Type</h2>
-      <p className="text-gray-700 mb-8 text-lg leading-relaxed">
-        Choose the type of Official Duty (OD) to proceed with your application.
-      </p>
-      <div className="flex flex-col sm:flex-row gap-4 justify-center">
-        <Button
-          onClick={() => handleTripTypeChange(true)}
-          className="w-full sm:w-48 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 text-white font-semibold py-3 rounded-xl shadow-md hover:shadow-lg transition-all duration-300 transform hover:-translate-y-1 focus:outline-none focus:ring-4 focus:ring-indigo-300"
-        >
-          🗓️ Single Day OD
-        </Button>
-        <Button
-          onClick={() => handleTripTypeChange(false)}
-          className="w-full sm:w-48 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 text-white font-semibold py-3 rounded-xl shadow-md hover:shadow-lg transition-all duration-300 transform hover:-translate-y-1 focus:outline-none focus:ring-4 focus:ring-indigo-300"
-        >
-          📆 Multiple Days OD
-        </Button>
-      </div>
-    </CardContent>
-  </Card>
-</div>
+    <ContentLayout title="Apply for ON Duty(OD)">
+      {tripType === null ? (
+        <div className="flex items-center justify-center min-h-[500px] bg-white">
+          <Card className="shadow-2xl border border-gray-100 max-w-2xl w-full rounded-3xl overflow-hidden bg-gradient-to-br from-gray-50 via-white to-gray-50 transition-transform duration-300 hover:scale-[1.02]">
+            <CardContent className="p-10 text-center">
+              <h2 className="text-3xl font-extrabold text-indigo-800 mb-4 tracking-tight">Select OD Type</h2>
+              <p className="text-gray-700 mb-8 text-lg leading-relaxed">
+                Choose the type of OD to proceed with your application.
+              </p>
+              <div className="flex flex-col sm:flex-row gap-4 justify-center flex-wrap">
+                <Button
+                  onClick={() => handleTripTypeChange('hour')}
+                  className="w-full sm:w-48 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 text-white font-semibold py-3 rounded-xl shadow-md hover:shadow-lg transition-all duration-300 transform hover:-translate-y-1 focus:outline-none focus:ring-4 focus:ring-indigo-300"
+                >
+                  🕒 Hour-Based OD
+                </Button>
+                <Button
+                  onClick={() => handleTripTypeChange('single')}
+                  className="w-full sm:w-48 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 text-white font-semibold py-3 rounded-xl shadow-md hover:shadow-lg transition-all duration-300 transform hover:-translate-y-1 focus:outline-none focus:ring-4 focus:ring-indigo-300"
+                >
+                  🗓️ Single Day OD
+                </Button>
+                <Button
+                  onClick={() => handleTripTypeChange('multiple')}
+                  className="w-full sm:w-48 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 text-white font-semibold py-3 rounded-xl shadow-md hover:shadow-lg transition-all duration-300 transform hover:-translate-y-1 focus:outline-none focus:ring-4 focus:ring-indigo-300"
+                >
+                  📆 Multiple Days OD
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
       ) : (
         <div className="flex flex-col lg:flex-row gap-6 max-w-7xl mx-auto px-4">
           {/* Left Side: Important Notes */}
@@ -266,7 +286,7 @@ function ODForm() {
             <Card className="shadow-lg border">
               <CardContent className="p-6">
                 <h3 className="text-2xl font-semibold text-green-700 text-center mb-6">
-                  {isSingleDay ? 'Single Day OD Form' : 'Multiple Days OD Form'}
+                  {tripType === 'hour' ? 'Hour-Based OD Form' : tripType === 'single' ? 'Single Day OD Form' : 'Multiple Days OD Form'}
                 </h3>
                 <form onSubmit={handleSubmit} className="space-y-6">
                   <div className="grid grid-cols-1 gap-6">
@@ -285,7 +305,7 @@ function ODForm() {
                           className="w-full"
                         />
                       </div>
-                      {isSingleDay === false && (
+                      {tripType === 'multiple' && (
                         <div>
                           <Label htmlFor="numberOfDays" className="text-blue-800">Number of Days</Label>
                           <Input
@@ -301,7 +321,7 @@ function ODForm() {
                           />
                         </div>
                       )}
-                      {isSingleDay === false && (
+                      {tripType === 'multiple' && (
                         <div>
                           <Label htmlFor="dateIn" className="text-blue-800">Date In</Label>
                           <Input
@@ -328,7 +348,7 @@ function ODForm() {
                           className="w-full"
                         />
                       </div>
-                      {isSingleDay === true && (
+                      {tripType === 'hour' && (
                         <div>
                           <Label htmlFor="estimatedTime" className="text-blue-800">Estimated Time (Hours)</Label>
                           <Input
@@ -345,7 +365,7 @@ function ODForm() {
                           />
                         </div>
                       )}
-                      {isSingleDay === true && (
+                      {(tripType === 'hour' || tripType === 'single') && (
                         <div>
                           <Label htmlFor="timeIn" className="text-blue-800">Time In</Label>
                           <Input
@@ -354,7 +374,7 @@ function ODForm() {
                             type="time"
                             value={form.timeIn}
                             onChange={handleChange}
-                            readOnly={form.estimatedTime !== ''}
+                            readOnly={tripType === 'hour' && form.estimatedTime !== ''}
                             className="w-full"
                           />
                         </div>
@@ -393,7 +413,7 @@ function ODForm() {
                   <div className="flex justify-between mt-6">
                     <Button
                       type="button"
-                      onClick={() => setIsSingleDay(null)}
+                      onClick={() => setTripType(null)}
                       className="w-40 bg-gray-500 hover:bg-gray-600 text-white"
                     >
                       Back to OD Type

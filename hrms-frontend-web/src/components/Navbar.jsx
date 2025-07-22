@@ -48,19 +48,8 @@ function Navbar() {
     HOD: [
       { text: "HoD Panel", path: "/hod/dashboard" },
       { text: "My Workspace", path: "/hod/employee-dashboard" },
-      { text: "Employees", path: "/hod/employees" },
-      { text: "Shift Manager", path: "/hod/shift-management" },
-      { text: "Attendance", path: "/hod/attendance" },
-      {
-        text: "Apply",
-        subItems: [
-          { text: "Apply Leave", path: "/hod/leave" },
-          { text: "Apply OD", path: "/hod/od" },
-          { text: "Apply Punch Missed", path: "/hod/punch-missed" },
-        ],
-      },
-            {
-        text: "Applied",
+                  {
+        text: "My Requests",
         subItems: [
           { text: "Applied Leave", path: "/hod/hod-my-leave-list" },
           { text: "Applied OD", path: "/hod/hod-od-list" },
@@ -77,6 +66,20 @@ function Navbar() {
           { text: "Applied Punch Missed", path: "/employee/punch-missed-list" },
         ],
       },
+       {
+        text: "Submit Request",
+        subItems: [
+          { text: "Apply Leave", path: "/hod/leave" },
+          { text: "Apply OD", path: "/hod/od" },
+          { text: "Apply Punch Missed", path: "/hod/punch-missed" },
+        ],
+      },
+      
+      { text: "Employees", path: "/hod/employees" },
+      { text: "Shift Manager", path: "/hod/shift-management" },
+      { text: "Attendance", path: "/hod/attendance" },
+     
+
       {
         text: "Approvals",
         subItems: [
@@ -93,7 +96,7 @@ function Navbar() {
     Employee: [
       { text: "My Workspace", path: "/employee/employee-dashboard" },
       {
-        text: "Apply",
+        text: "Submit Request",
         subItems: [
           { text: "Apply Leave", path: "/employee/leave" },
           { text: "Apply OD", path: "/employee/od" },
@@ -101,7 +104,7 @@ function Navbar() {
         ],
       },
       {
-        text: "Applied",
+        text: "My Requests",
         subItems: [
           { text: "Applied Leave", path: "/employee/leave-list" },
           { text: "Applied OD", path: "/employee/od-list" },
