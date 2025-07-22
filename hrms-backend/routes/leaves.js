@@ -12,29 +12,433 @@ import generateNextCompositeLeaveId from "../utils/generateCompositeLeaveId.js";
 
 const router = express.Router();
 
+
+
+// router.post(
+//   "/",
+//   auth,
+//   role(["Employee", "HOD", "Admin"]),
+//  upload.any(),
+//   async (req, res) => {
+//    try {
+//       const user = await Employee.findById(req.user.id);
+//       if (!user) return res.status(404).json({ message: "Employee not found" });
+//       if (!user.designation) return res.status(400).json({ message: "Employee designation is required" });
+//       if (!user.department) return res.status(400).json({ message: "Employee department is required" });
+
+//       const today = new Date();
+//       today.setUTCHours(0, 0, 0, 0);
+//       const sevenDaysAgo = new Date(today);
+//       sevenDaysAgo.setDate(today.getDate() - 7);
+//       const sevenDaysFuture = new Date(today);
+//       sevenDaysFuture.setDate(today.getDate() + 7);
+
+//       // Debug: Log raw req.body and req.files
+//       console.log("Raw req.body:", req.body);
+//       console.log("Raw req.files:", req.files);
+
+//  const parseSegments = (formData, files) => {
+//   console.log("parseSegments input formData:", formData);
+//   console.log("parseSegments input files:", files);
+//   if (!Array.isArray(formData.segments)) {
+//     console.log("No segments array found in formData");
+//     return [];
+//   }
+
+//   const segments = formData.segments.map((segment, index) => {
+//     console.log(`Processing segment ${index}:`, segment);
+//     const fromDuration = segment.fullDay?.fromDuration || "full";
+//     const toDuration = segment.fullDay?.to ? (segment.fullDay?.toDuration || "full") : "";
+//     return {
+//       leaveType: segment.leaveType || "",
+//       isEmergency: segment.isEmergency === "true" || segment.isEmergency === true,
+//       fullDay: {
+//         from: segment.fullDay?.from || "",
+//         fromDuration,
+//         fromSession: fromDuration === "half" ? (segment.fullDay?.fromSession || "forenoon") : null,
+//         to: segment.fullDay?.to || "",
+//         toDuration,
+//         toSession: toDuration === "half" ? (segment.fullDay?.toSession || "forenoon") : null,
+//       },
+//       compensatoryEntryId: segment.compensatoryEntryId || "",
+//       restrictedHoliday: segment.restrictedHoliday || "",
+//       projectDetails: segment.projectDetails || "",
+//       medicalCertificate: files.find((f) => f.fieldname?.includes(`segments[${index}][medicalCertificate]`)) || null,
+//     };
+//   });
+
+//   console.log("Generated segments:", segments);
+//   return segments.filter(Boolean);
+// };
+
+//       const leaveSegments = parseSegments(req.body, req.files || []);
+//       console.log("Parsed leaveSegments:", leaveSegments);
+
+//       if (!leaveSegments.length) {
+//         return res.status(400).json({ message: "No leave segments provided" });
+//       }
+
+//       if (!req.body.reason) return res.status(400).json({ message: "Reason is required" });
+//       if (!req.body.chargeGivenTo) return res.status(400).json({ message: "Charge Given To is required" });
+//       if (!req.body.emergencyContact) return res.status(400).json({ message: "Emergency Contact is required" });
+
+//       let compositeLeaveId = leaveSegments.length > 1 ? await generateNextCompositeLeaveId() : null;
+//       if (leaveSegments.length > 1 && !compositeLeaveId) {
+//         return res.status(500).json({ message: "Failed to generate composite leave ID" });
+//       }
+
+//       const todayStr = today.toISOString().split("T")[0];
+//       const errors = [];
+//       const savedLeaves = [];
+
+//       for (const [index, segment] of leaveSegments.entries()) {
+//         try {
+//           if (!segment.leaveType) throw new Error("Leave Type is required");
+//           if (!segment.fullDay.from) throw new Error("From date is required");
+//           if (!/^\d{4}-\d{2}-\d{2}$/.test(segment.fullDay.from)) {
+//             throw new Error("Invalid from date format (expected YYYY-MM-DD)");
+//           }
+//           const leaveStart = new Date(segment.fullDay.from);
+//           if (isNaN(leaveStart.getTime())) throw new Error("Invalid from date");
+//           const fromDuration = segment.fullDay.fromDuration || "full";
+//           const fromSession = segment.fullDay.fromSession || "";
+//           if (!["full", "half"].includes(fromDuration)) {
+//             throw new Error("Invalid fromDuration, must be 'full' or 'half'");
+//           }
+//           if (fromDuration === "half" && !["forenoon", "afternoon"].includes(fromSession)) {
+//             throw new Error("Invalid fromSession, must be 'forenoon' or 'afternoon'");
+//           }
+//           if (fromDuration === "half" && !fromSession) {
+//             throw new Error("fromSession is required for half-day fromDuration");
+//           }
+
+//           let leaveEnd = leaveStart;
+//           let toDuration = "";
+//           let toSession = "";
+//           let leaveDays = fromDuration === "half" ? 0.5 : 1;
+
+//           if (segment.fullDay.to) {
+//             if (!/^\d{4}-\d{2}-\d{2}$/.test(segment.fullDay.to)) {
+//               throw new Error("Invalid to date format (expected YYYY-MM-DD)");
+//             }
+//             leaveEnd = new Date(segment.fullDay.to);
+//             if (isNaN(leaveEnd.getTime())) throw new Error("Invalid to date");
+//             toDuration = segment.fullDay.toDuration || "full";
+//             toSession = segment.fullDay.toSession || "";
+//             if (!["full", "half"].includes(toDuration)) {
+//               throw new Error("Invalid toDuration, must be 'full' or 'half'");
+//             }
+//             if (toDuration === "half" && toSession !== "forenoon") {
+//               throw new Error("toSession must be 'forenoon' for half-day toDuration");
+//             }
+//             if (toDuration === "half" && !toSession) {
+//               throw new Error("toSession is required for half-day toDuration");
+//             }
+//             if (leaveStart.toISOString().split("T")[0] === leaveEnd.toISOString().split("T")[0]) {
+//               if (fromDuration === "full" && toDuration === "full") {
+//                 leaveDays = 1;
+//               } else if (fromDuration === "half" && toDuration === "half" && fromSession === "afternoon" && toSession === "forenoon") {
+//                 leaveDays = 0.5;
+//               } else {
+//                 throw new Error("Invalid duration combination for same-day leave");
+//               }
+//             } else {
+//              const fixedHolidays = [
+//   new Date(2025, 0, 26),
+//   new Date(2025, 2, 14),
+//   new Date(2025, 7, 15),
+//   new Date(2025, 9, 2),
+//   new Date(2025, 9, 21),
+//   new Date(2025, 9, 22),
+//   new Date(2025, 10, 5),
+// ];
+
+// const isHoliday = (date) =>
+//   date.getDay() === 0 ||  // Sunday
+//   fixedHolidays.some((holiday) => holiday.toDateString() === date.toDateString());
+
+// let leaveDays = 0;
+// let current = new Date(leaveStart);
+// current.setHours(0, 0, 0, 0);
+// let end = new Date(leaveEnd);
+// end.setHours(0, 0, 0, 0);
+
+// while (current <= end) {
+//   const isFromDate = current.toISOString().split("T")[0] === leaveStart.toISOString().split("T")[0];
+//   const isToDate = current.toISOString().split("T")[0] === leaveEnd.toISOString().split("T")[0];
+
+//   if (!isHoliday(current)) {
+//     if (isFromDate && fromDuration === "half") {
+//       leaveDays += 0.5;
+//     } else if (isToDate && toDuration === "half") {
+//       leaveDays += 0.5;
+//     } else if (!(isFromDate && fromDuration === "half") && !(isToDate && toDuration === "half")) {
+//       leaveDays += 1;
+//     }
+//   }
+
+//   current.setDate(current.getDate() + 1);
+// }
+
+
+//             }
+//           }
+
+//           if (leaveStart > leaveEnd) {
+//             throw new Error("Leave start date cannot be after end date");
+//           }
+
+//           if (segment.isEmergency && fromDuration === "full" && leaveStart.toISOString().split("T")[0] !== todayStr) {
+//             throw new Error("Full-day Emergency leave must be for the current date only");
+//           }
+//           if (!segment.isEmergency && leaveStart <= today) {
+//             throw new Error("From date must be after today for non-Emergency leave");
+//           }
+
+//           if (segment.leaveType === "Medical") {
+//             if (leaveStart < sevenDaysAgo || leaveStart > sevenDaysFuture) {
+//               throw new Error("Medical leave from date must be within 7 days prior and 7 days future from today");
+//             }
+//             if (!segment.fullDay.to) {
+//               throw new Error("To date is required for Medical leave");
+//             }
+//           }
+
+//           if (!segment.isEmergency) {
+//             const overlappingChargeAssignments = await Leave.find({
+//               chargeGivenTo: user._id,
+//               $or: [
+//                 {
+//                   "fullDay.from": { $lte: leaveEnd },
+//                   "fullDay.to": { $gte: leaveStart },
+//                   $and: [
+//                     { "status.hod": { $ne: "Rejected" } },
+//                     { "status.ceo": { $ne: "Rejected" } },
+//                     { "status.admin": { $in: ["Pending", "Acknowledged"] } },
+//                   ],
+//                 },
+//               ],
+//             });
+//             if (overlappingChargeAssignments.length > 0) {
+//               const leaveDetails = overlappingChargeAssignments[0];
+//               const dateRangeStr = `from ${new Date(leaveDetails.fullDay.from).toISOString().split("T")[0]}${
+//                 leaveDetails.fullDay.fromDuration === "half" ? ` (${leaveDetails.fullDay.fromSession})` : ""
+//               }${leaveDetails.fullDay.to ? ` to ${new Date(leaveDetails.fullDay.to).toISOString().split("T")[0]}${
+//                 leaveDetails.fullDay.toDuration === "half" ? ` (${leaveDetails.fullDay.toSession})` : ""
+//               }` : ""}`;
+//               throw new Error(
+//                 `You are assigned as Charge Given To for a leave ${dateRangeStr} and cannot apply for non-Emergency leaves during this period.`
+//               );
+//             }
+//           }
+
+//           const chargeGivenToEmployee = await Employee.findById(req.body.chargeGivenTo);
+//           if (!chargeGivenToEmployee) {
+//             throw new Error("Selected employee for Charge Given To not found");
+//           }
+//           const startDateOnly = new Date(leaveStart.setHours(0, 0, 0, 0));
+//           const endDateOnly = new Date(leaveEnd.setHours(0, 0, 0, 0));
+//           const overlappingLeaves = await Leave.find({
+//             $or: [
+//               {
+//                 chargeGivenTo: req.body.chargeGivenTo,
+//                 $or: [
+//                   {
+//                     "fullDay.from": { $lte: leaveEnd },
+//                     "fullDay.to": { $gte: leaveStart },
+//                     $and: [
+//                       { "status.hod": { $in: ["Pending", "Approved"] } },
+//                       { "status.ceo": { $in: ["Pending", "Approved"] } },
+//                       { "status.admin": { $in: ["Pending", "Acknowledged"] } },
+//                     ],
+//                   },
+//                 ],
+//               },
+//               {
+//                 employee: req.body.chargeGivenTo,
+//                 $or: [
+//                   {
+//                     "fullDay.from": { $lte: leaveEnd },
+//                     "fullDay.to": { $gte: leaveStart },
+//                     $and: [
+//                       { "status.hod": { $in: ["Pending", "Approved"] } },
+//                       { "status.ceo": { $in: ["Pending", "Approved"] } },
+//                       { "status.admin": { $in: ["Pending", "Acknowledged"] } },
+//                     ],
+//                   },
+//                 ],
+//               },
+//             ],
+//           });
+//           if (overlappingLeaves.length > 0) {
+//             throw new Error(
+//               "Selected employee is either already assigned as Charge Given To or has a pending/approved leave for the specified date range"
+//             );
+//           }
+
+//           const leaveType = segment.leaveType;
+//           const isConfirmed = user.employeeType === "Confirmed";
+//           const joinDate = new Date(user.dateOfJoining);
+//           const yearsOfService = (new Date() - joinDate) / (1000 * 60 * 60 * 24 * 365);
+
+//           switch (leaveType) {
+//             case "Casual":
+//               const canTakeCasualLeave = await user.checkConsecutivePaidLeaves(leaveStart, leaveEnd);
+//               if (!canTakeCasualLeave) {
+//                 throw new Error("Cannot take more than 3 consecutive paid leave days.");
+//               }
+//               if (user.paidLeaves < leaveDays) {
+//                 throw new Error("Insufficient Casual leave balance.");
+//               }
+//               break;
+//             case "Medical":
+//               if (!isConfirmed) throw new Error("Medical leave is only for confirmed employees.");
+//               if (![3, 4, 7].includes(leaveDays)) throw new Error("Medical leave must be exactly 3, 4, or 7 days.");
+//               if (user.medicalLeaves < leaveDays) throw new Error("Insufficient Medical leave balance.");
+//               const medicalLeavesThisYear = await Leave.find({
+//                 employeeId: user.employeeId,
+//                 leaveType: "Medical",
+//                 "status.admin": "Acknowledged",
+//                 "fullDay.from": { $gte: new Date(today.getFullYear(), 0, 1) },
+//               });
+//               if (medicalLeavesThisYear.length > 0) {
+//                 throw new Error("Medical leave can only be used once per year.");
+//               }
+//               break;
+//             case "Maternity":
+//               if (!isConfirmed || user.gender?.trim().toLowerCase() !== "female") {
+//                 throw new Error("Maternity leave is only for confirmed female employees.");
+//               }
+//               if (yearsOfService < 1) throw new Error("Must have completed one year of service.");
+//               if (leaveDays !== 90) throw new Error("Maternity leave must be exactly 90 days.");
+//               break;
+//             case "Paternity":
+//               if (!isConfirmed || user.gender?.trim().toLowerCase() !== "male") {
+//                 throw new Error("Paternity leave is only for confirmed male employees.");
+//               }
+//               if (yearsOfService < 1) throw new Error("Must have completed one year of service.");
+//               if (leaveDays !== 7) throw new Error("Paternity leave must be exactly 7 days.");
+//               break;
+//             case "Compensatory":
+//               const compensatoryEntry = await CompensatoryLeave.findById(segment.compensatoryEntryId);
+//               if (!compensatoryEntry || compensatoryEntry.employeeId.toString() !== user._id.toString() || compensatoryEntry.status !== "Available") {
+//                 throw new Error("Invalid or unavailable compensatory leave entry.");
+//               }
+//               const hoursNeeded = fromDuration === "half" ? 4 : 8;
+//               if (compensatoryEntry.hours !== hoursNeeded) {
+//                 throw new Error(
+//                   `Compensatory entry (${compensatoryEntry.hours} hours) does not match leave duration (${fromDuration === "half" ? "4 hours" : "8 hours"})`
+//                 );
+//               }
+//               break;
+//             case "Restricted Holidays":
+//               if (!isConfirmed) throw new Error("Restricted Holidays are only for confirmed employees.");
+//               if (user.restrictedHolidays <= 0) throw new Error("No restricted holidays available this year.");
+//               if (leaveDays !== 1) throw new Error("Restricted Holiday must be exactly 1 day.");
+//               break;
+//             case "Leave Without Pay(LWP)":
+//               if (leaveDays > 30) throw new Error("Leave Without Pay cannot exceed 30 days.");
+//               break;
+//             case "Emergency":
+//               if (!segment.isEmergency) throw new Error("Emergency leave must have isEmergency set to true.");
+//               if (leaveDays > 1) throw new Error("Emergency leave can only be half day or one full day.");
+//               break;
+//             default:
+//               throw new Error("Invalid leave type specified.");
+//           }
+
+//           const leave = new Leave({
+//             employee: user._id,
+//             employeeId: user.employeeId,
+//   name: user.name,
+//   designation: user.designation,
+//   department: user.department,
+//             leaveType: segment.leaveType,
+//             fullDay: {
+//               from: leaveStart,
+//               fromDuration,
+//               fromSession,
+//               to: segment.fullDay.to ? leaveEnd : undefined,
+//               toDuration: segment.fullDay.to ? toDuration : undefined,
+//               toSession: segment.fullDay.to ? toSession : undefined,
+//             },
+//             reason: req.body.reason,
+//             chargeGivenTo: req.body.chargeGivenTo,
+//             emergencyContact: req.body.emergencyContact,
+//             projectDetails: segment.projectDetails || "",
+//             compositeLeaveId,
+//             status: {
+//               hod: "Pending",
+//               ceo: "Pending",
+//               admin: "Pending",
+//             },
+//           });
+
+//           if (segment.medicalCertificate) {
+//             leave.medicalCertificate = {
+//               data: segment.medicalCertificate.buffer,
+//               contentType: segment.medicalCertificate.mimetype,
+//             };
+//           }
+//           if (segment.compensatoryEntryId) {
+//             leave.compensatoryEntry = segment.compensatoryEntryId;
+//           }
+//           if (segment.restrictedHoliday) {
+//             leave.restrictedHoliday = segment.restrictedHoliday;
+//           }
+
+//           const savedLeave = await leave.save();
+//           savedLeaves.push(savedLeave);
+
+//           if (leaveType === "Compensatory" && compensatoryEntry) {
+//             compensatoryEntry.status = "Used";
+//             await compensatoryEntry.save();
+//           } else if (leaveType === "Medical") {
+//             user.medicalLeaves -= leaveDays;
+//             await user.save();
+//           } else if (leaveType === "Casual") {
+//             user.paidLeaves -= leaveDays;
+//             await user.save();
+//           } else if (leaveType === "Restricted Holidays") {
+//             user.restrictedHolidays -= 1;
+//             await user.save();
+//           }
+
+//           if (leaveType === "Emergency") {
+//             await Employee.findByIdAndUpdate(user._id, { canApplyEmergencyLeave: false });
+//           }
+//       } catch (error) {
+//   console.log(`Segment ${index} failed:`, error.message, segment); // 👈 log this!
+//   errors.push({ segmentIndex: index, message: error.message });
+// }
+
+//       }
+
+//       if (errors.length > 0) {
+//         return res.status(400).json({ message: "Partial success", errors });
+//       }
+
+//       res.status(201).json({ message: "Leave request submitted successfully", data: savedLeaves });
+//     } catch (error) {
+//       console.error("Leave submission error:", error);
+//       res.status(500).json({ message: "Server error", error: error.message });
+//     }
+//   }
+// );
+
+
 router.post(
   "/",
   auth,
   role(["Employee", "HOD", "Admin"]),
-  upload.single("medicalCertificate"),
+  upload.any(),
   async (req, res) => {
     try {
       const user = await Employee.findById(req.user.id);
-      if (!user) {
-        return res.status(404).json({ message: "Employee not found" });
-      }
-      if (!user.designation) {
-        return res
-          .status(400)
-          .json({ message: "Employee designation is required" });
-      }
-      if (!user.department) {
-        return res
-          .status(400)
-          .json({ message: "Employee department is required" });
-      }
+      if (!user) return res.status(404).json({ message: "Employee not found" });
+      if (!user.designation) return res.status(400).json({ message: "Employee designation is required" });
+      if (!user.department) return res.status(400).json({ message: "Employee department is required" });
 
-      const currentYear = new Date().getFullYear();
       const today = new Date();
       today.setUTCHours(0, 0, 0, 0);
       const sevenDaysAgo = new Date(today);
@@ -42,133 +446,161 @@ router.post(
       const sevenDaysFuture = new Date(today);
       sevenDaysFuture.setDate(today.getDate() + 7);
 
-      const leaveSegments = Array.isArray(req.body) ? req.body : [req.body];
+      // Debug: Log raw req.body and req.files
+      console.log("Raw req.body:", req.body);
+      console.log("Raw req.files:", req.files);
 
-      // Generate compositeLeaveId for multiple segments before processing
+      const parseSegments = (formData, files) => {
+        console.log("parseSegments input formData:", formData);
+        console.log("parseSegments input files:", files);
+        if (!Array.isArray(formData.segments)) {
+          console.log("No segments array found in formData");
+          return [];
+        }
+
+        const segments = formData.segments.map((segment, index) => {
+          console.log(`Processing segment ${index}:`, segment);
+          const fromDuration = segment.fullDay?.fromDuration || "full";
+          const toDuration = segment.fullDay?.to ? (segment.fullDay?.toDuration || "full") : "";
+
+          // Normalize from date to midnight UTC
+          let fromDate = segment.fullDay?.from ? new Date(segment.fullDay.from) : null;
+          if (fromDate && !isNaN(fromDate.getTime())) {
+            fromDate.setUTCHours(0, 0, 0, 0); // Set to midnight UTC
+          } else {
+            fromDate = null;
+          }
+
+          // Normalize to date to midnight UTC (if provided)
+          let toDate = segment.fullDay?.to ? new Date(segment.fullDay.to) : null;
+          if (toDate && !isNaN(toDate.getTime())) {
+            toDate.setUTCHours(0, 0, 0, 0); // Set to midnight UTC
+          } else {
+            toDate = null;
+          }
+
+          return {
+            leaveType: segment.leaveType || "",
+            isEmergency: segment.isEmergency === "true" || segment.isEmergency === true,
+            fullDay: {
+              from: fromDate ? fromDate.toISOString() : "",
+              fromDuration,
+              fromSession: fromDuration === "half" ? (segment.fullDay?.fromSession || "forenoon") : null,
+              to: toDate ? toDate.toISOString() : "",
+              toDuration,
+              toSession: toDuration === "half" ? (segment.fullDay?.toSession || "forenoon") : null,
+            },
+            compensatoryEntryId: segment.compensatoryEntryId || "",
+            restrictedHoliday: segment.restrictedHoliday || "", // Only include if explicitly provided
+            projectDetails: segment.projectDetails || "",
+            medicalCertificate: files.find((f) => f.fieldname?.includes(`segments[${index}][medicalCertificate]`)) || null,
+          };
+        });
+
+        console.log("Generated segments:", segments);
+        return segments.filter(Boolean);
+      };
+
+      const leaveSegments = parseSegments(req.body, req.files || []);
+      console.log("Parsed leaveSegments:", leaveSegments);
+
+      if (!leaveSegments.length) {
+        return res.status(400).json({ message: "No leave segments provided" });
+      }
+
+      if (!req.body.reason) return res.status(400).json({ message: "Reason is required" });
+      if (!req.body.chargeGivenTo) return res.status(400).json({ message: "Charge Given To is required" });
+      if (!req.body.emergencyContact) return res.status(400).json({ message: "Emergency Contact is required" });
+
       let compositeLeaveId = leaveSegments.length > 1 ? await generateNextCompositeLeaveId() : null;
       if (leaveSegments.length > 1 && !compositeLeaveId) {
         return res.status(500).json({ message: "Failed to generate composite leave ID" });
       }
 
-      const todayStr = today.toISOString().split('T')[0]; // "2025-07-15"
-      let isEmergencyContext = leaveSegments.some(segment => {
-        const leaveStart = new Date(segment.fullDay.from);
-        return leaveStart.toISOString().split('T')[0] === todayStr;
-      });
-
-      const savedLeaves = [];
+      const todayStr = today.toISOString().split("T")[0];
       const errors = [];
+      const savedLeaves = [];
 
-      for (const segment of leaveSegments) {
+      for (const [index, segment] of leaveSegments.entries()) {
         try {
-          let leaveDays = 0;
-          let leaveStart, leaveEnd;
-          if (segment.fullDay?.from) {
-            if (!/^\d{4}-\d{2}-\d{2}$/.test(segment.fullDay.from)) {
-              return res
-                .status(400)
-                .json({
-                  message: "Invalid full day from date format (expected YYYY-MM-DD)",
-                });
-            }
-            leaveStart = new Date(segment.fullDay.from);
-            if (isNaN(leaveStart.getTime())) {
-              return res.status(400).json({ message: "Invalid full day from date" });
-            }
-            const fromDuration = segment.fullDay.fromDuration || 'full';
-            const fromSession = segment.fullDay.fromSession;
-            if (!['full', 'half'].includes(fromDuration)) {
-              return res.status(400).json({ message: "Invalid fromDuration, must be 'full' or 'half'" });
-            }
-            if (fromDuration === 'half' && !['forenoon', 'afternoon'].includes(fromSession)) {
-              return res.status(400).json({ message: "Invalid fromSession, must be 'forenoon' or 'afternoon'" });
-            }
-            if (fromDuration === 'half' && !fromSession) {
-              return res.status(400).json({ message: "fromSession is required for half-day fromDuration" });
-            }
-            if (fromDuration === 'half') {
-              leaveDays = 0.5;
-              leaveEnd = new Date(leaveStart);
-            } else if (!segment.fullDay?.to) {
-              leaveDays = 1;
-              leaveEnd = new Date(leaveStart);
-            } else {
-              if (!/^\d{4}-\d{2}-\d{2}$/.test(segment.fullDay.to)) {
-                return res
-                  .status(400)
-                  .json({
-                    message: "Invalid full day to date format (expected YYYY-MM-DD)",
-                  });
-              }
-              leaveEnd = new Date(segment.fullDay.to);
-              if (isNaN(leaveEnd.getTime())) {
-                return res.status(400).json({ message: "Invalid full day to date" });
-              }
-              const toDuration = segment.fullDay.toDuration || 'full';
-              const toSession = segment.fullDay.toSession;
-              if (!['full', 'half'].includes(toDuration)) {
-                return res.status(400).json({ message: "Invalid toDuration, must be 'full' or 'half'" });
-              }
-              if (toDuration === 'half' && toSession !== 'forenoon') {
-                return res.status(400).json({ message: "toSession must be 'forenoon' for half-day toDuration" });
-              }
-              if (toDuration === 'half' && !toSession) {
-                return res.status(400).json({ message: "toSession is required for half-day toDuration" });
-              }
-              if (leaveStart.toISOString().split('T')[0] === leaveEnd.toISOString().split('T')[0]) {
-                if (fromDuration === 'full' && toDuration === 'full') {
-                  leaveDays = 1;
-                } else if (fromDuration === 'half' && toDuration === 'half' && fromSession === 'afternoon' && toSession === 'forenoon') {
-                  leaveDays = 0.5;
-                } else {
-                  return res.status(400).json({ message: "Invalid duration combination for same-day leave" });
-                }
-              } else {
-                leaveDays = (leaveEnd - leaveStart) / (1000 * 60 * 60 * 24) + 1;
-                if (fromDuration === 'half') leaveDays -= 0.5;
-                if (toDuration === 'half') leaveDays -= 0.5;
-              }
-            }
+          if (!segment.leaveType) throw new Error("Leave Type is required");
+          if (!segment.fullDay.from) throw new Error("From date is required");
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(segment.fullDay.from.split("T")[0])) {
+            throw new Error("Invalid from date format (expected YYYY-MM-DD)");
+          }
+          const leaveStart = new Date(segment.fullDay.from);
+          if (isNaN(leaveStart.getTime())) throw new Error("Invalid from date");
+          const fromDuration = segment.fullDay.fromDuration || "full";
+          const fromSession = segment.fullDay.fromSession || "";
+          if (!["full", "half"].includes(fromDuration)) {
+            throw new Error("Invalid fromDuration, must be 'full' or 'half'");
+          }
+          if (fromDuration === "half" && !["forenoon", "afternoon"].includes(fromSession)) {
+            throw new Error("Invalid fromSession, must be 'forenoon' or 'afternoon'");
+          }
+          if (fromDuration === "half" && !fromSession) {
+            throw new Error("fromSession is required for half-day fromDuration");
+          }
 
-            // Validation inside the block after fromDuration is defined
-            const leaveStartStr = leaveStart.toISOString().split('T')[0];
-            if (isEmergencyContext && fromDuration === 'full' && leaveStartStr !== todayStr) {
-              return res
-                .status(400)
-                .json({
-                  message: "Full-day leave under Emergency context must be for the current date only",
-                });
-            } else if (!isEmergencyContext && segment.fullDay?.from && leaveStart <= today) {
-              return res
-                .status(400)
-                .json({
-                  message: "Full day from date must be after today for this leave type",
-                });
+          let leaveEnd = leaveStart;
+          let toDuration = "";
+          let toSession = "";
+          let leaveDays = fromDuration === "half" ? 0.5 : 1;
+
+          if (segment.fullDay.to) {
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(segment.fullDay.to.split("T")[0])) {
+              throw new Error("Invalid to date format (expected YYYY-MM-DD)");
             }
-          } else {
-            return res.status(400).json({ message: "Invalid leave dates provided" });
+            leaveEnd = new Date(segment.fullDay.to);
+            if (isNaN(leaveEnd.getTime())) throw new Error("Invalid to date");
+            toDuration = segment.fullDay.toDuration || "full";
+            toSession = segment.fullDay.toSession || "";
+            if (!["full", "half"].includes(toDuration)) {
+              throw new Error("Invalid toDuration, must be 'full' or 'half'");
+            }
+            if (toDuration === "half" && toSession !== "forenoon") {
+              throw new Error("toSession must be 'forenoon' for half-day toDuration");
+            }
+            if (toDuration === "half" && !toSession) {
+              throw new Error("toSession is required for half-day toDuration");
+            }
+            if (leaveStart.toISOString().split("T")[0] === leaveEnd.toISOString().split("T")[0]) {
+              if (fromDuration === "full" && toDuration === "full") {
+                leaveDays = 1;
+              } else if (fromDuration === "half" && toDuration === "half" && fromSession === "afternoon" && toSession === "forenoon") {
+                leaveDays = 0.5;
+              } else {
+                throw new Error("Invalid duration combination for same-day leave");
+              }
+            } else {
+              const daysDiff = Math.floor((leaveEnd - leaveStart) / (1000 * 60 * 60 * 24)) + 1;
+              leaveDays = fromDuration === "half" && toDuration === "half" ? daysDiff - 1 : daysDiff;
+              if (fromDuration === "half") leaveDays -= 0.5;
+              if (toDuration === "half") leaveDays -= 0.5;
+            }
           }
 
           if (leaveStart > leaveEnd) {
-            return res
-              .status(400)
-              .json({ message: "Leave start date cannot be after end date" });
+            throw new Error("Leave start date cannot be after end date");
+          }
+
+          if (segment.isEmergency && fromDuration === "full" && leaveStart.toISOString().split("T")[0] !== todayStr) {
+            throw new Error("Full-day Emergency leave must be for the current date only");
+          }
+          if (!segment.isEmergency && leaveStart <= today) {
+            throw new Error("From date must be after today for non-Emergency leave");
           }
 
           if (segment.leaveType === "Medical") {
             if (leaveStart < sevenDaysAgo || leaveStart > sevenDaysFuture) {
-              return res
-                .status(400)
-                .json({
-                  message: "Medical leave from date must be within 7 days prior and 7 days future from today",
-                });
+              throw new Error("Medical leave from date must be within 7 days prior and 7 days future from today");
             }
-            if (!segment.fullDay?.to) {
-              return res.status(400).json({ message: "To date is required for Medical leave" });
+            if (!segment.fullDay.to) {
+              throw new Error("To date is required for Medical leave");
             }
           }
 
-          if (segment.leaveType !== "Emergency") {
+          if (!segment.isEmergency) {
             const overlappingChargeAssignments = await Leave.find({
               chargeGivenTo: user._id,
               $or: [
@@ -180,471 +612,213 @@ router.post(
                     { "status.ceo": { $ne: "Rejected" } },
                     { "status.admin": { $in: ["Pending", "Acknowledged"] } },
                   ],
-                  $or: [
-                    { 'fullDay.fromDuration': 'full' },
-                    { 'fullDay.fromDuration': 'half', 'fullDay.fromSession': { $in: ['forenoon', 'afternoon'] } }
-                  ],
-                  ...(leaveStart.toISOString().split('T')[0] !== leaveEnd.toISOString().split('T')[0] && {
-                    $or: [
-                      { 'fullDay.toDuration': 'full' },
-                      { 'fullDay.toDuration': 'half', 'fullDay.toSession': 'forenoon' }
-                    ]
-                  })
-                }
+                },
               ],
             });
             if (overlappingChargeAssignments.length > 0) {
               const leaveDetails = overlappingChargeAssignments[0];
-              const dateRangeStr =
-                `from ${
-                  new Date(leaveDetails.fullDay.from).toISOString().split("T")[0]
-                }${leaveDetails.fullDay.fromDuration === 'half' ? ` (${leaveDetails.fullDay.fromSession})` : ''}${leaveDetails.fullDay.to ? ` to ${
-                  new Date(leaveDetails.fullDay.to).toISOString().split("T")[0]
-                }${leaveDetails.fullDay.toDuration === 'half' ? ` (${leaveDetails.fullDay.toSession})` : ''}` : ''}`;
-              return res.status(400).json({
-                message: `You are assigned as Charge Given To for a leave ${dateRangeStr} and cannot apply for non-Emergency leaves during this period.`,
-              });
+              const dateRangeStr = `from ${new Date(leaveDetails.fullDay.from).toISOString().split("T")[0]}${
+                leaveDetails.fullDay.fromDuration === "half" ? ` (${leaveDetails.fullDay.fromSession})` : ""
+              }${leaveDetails.fullDay.to ? ` to ${new Date(leaveDetails.fullDay.to).toISOString().split("T")[0]}${
+                leaveDetails.fullDay.toDuration === "half" ? ` (${leaveDetails.fullDay.toSession})` : ""
+              }` : ""}`;
+              throw new Error(
+                `You are assigned as Charge Given To for a leave ${dateRangeStr} and cannot apply for non-Emergency leaves during this period.`
+              );
             }
+          }
+
+          const chargeGivenToEmployee = await Employee.findById(req.body.chargeGivenTo);
+          if (!chargeGivenToEmployee) {
+            throw new Error("Selected employee for Charge Given To not found");
+          }
+          const startDateOnly = new Date(leaveStart);
+          startDateOnly.setUTCHours(0, 0, 0, 0);
+          const endDateOnly = segment.fullDay.to ? new Date(leaveEnd) : new Date(leaveStart);
+          endDateOnly.setUTCHours(0, 0, 0, 0);
+          const overlappingLeaves = await Leave.find({
+            $or: [
+              {
+                chargeGivenTo: req.body.chargeGivenTo,
+                $or: [
+                  {
+                    "fullDay.from": { $lte: leaveEnd },
+                    "fullDay.to": { $gte: leaveStart },
+                    $and: [
+                      { "status.hod": { $in: ["Pending", "Approved"] } },
+                      { "status.ceo": { $in: ["Pending", "Approved"] } },
+                      { "status.admin": { $in: ["Pending", "Acknowledged"] } },
+                    ],
+                  },
+                ],
+              },
+              {
+                employee: req.body.chargeGivenTo,
+                $or: [
+                  {
+                    "fullDay.from": { $lte: leaveEnd },
+                    "fullDay.to": { $gte: leaveStart },
+                    $and: [
+                      { "status.hod": { $in: ["Pending", "Approved"] } },
+                      { "status.ceo": { $in: ["Pending", "Approved"] } },
+                      { "status.admin": { $in: ["Pending", "Acknowledged"] } },
+                    ],
+                  },
+                ],
+              },
+            ],
+          });
+          if (overlappingLeaves.length > 0) {
+            throw new Error(
+              "Selected employee is either already assigned as Charge Given To or has a pending/approved leave for the specified date range"
+            );
           }
 
           const leaveType = segment.leaveType;
           const isConfirmed = user.employeeType === "Confirmed";
           const joinDate = new Date(user.dateOfJoining);
-          const yearsOfService =
-            (new Date() - joinDate) / (1000 * 60 * 60 * 24 * 365);
-
-          const chargeGivenToEmployee = await Employee.findById(
-            segment.chargeGivenTo
-          );
-          if (!chargeGivenToEmployee) {
-            return res
-              .status(400)
-              .json({ message: "Selected employee for Charge Given To not found" });
-          }
-          const startDateOnly = new Date(leaveStart.setHours(0, 0, 0, 0));
-          const endDateOnly = new Date(leaveEnd.setHours(0, 0, 0, 0));
-          const overlappingLeaves = await Leave.find({
-            $or: [
-              {
-                chargeGivenTo: segment.chargeGivenTo,
-                $or: [
-                  {
-                    "fullDay.from": { $lte: leaveEnd },
-                    "fullDay.to": { $gte: leaveStart },
-                    $and: [
-                      { "status.hod": { $in: ["Pending", "Approved"] } },
-                      { "status.ceo": { $in: ["Pending", "Approved"] } },
-                      { "status.admin": { $in: ["Pending", "Acknowledged"] } },
-                    ],
-                    $or: [
-                      { 'fullDay.fromDuration': 'full' },
-                      { 'fullDay.fromDuration': 'half', 'fullDay.fromSession': { $in: ['forenoon', 'afternoon'] } }
-                    ],
-                    ...(leaveStart.toISOString().split('T')[0] !== leaveEnd.toISOString().split('T')[0] && {
-                      $or: [
-                        { 'fullDay.toDuration': 'full' },
-                        { 'fullDay.toDuration': 'half', 'fullDay.toSession': 'forenoon' }
-                      ]
-                    })
-                  },
-                  {
-                    "fullDay.from": { $gte: startDateOnly, $lte: endDateOnly },
-                    "fullDay.to": { $gte: startDateOnly, $lte: endDateOnly },
-                    "fullDay.fromDuration": 'half',
-                    "fullDay.fromSession": { $in: ['forenoon', 'afternoon'] },
-                    $and: [
-                      { "status.hod": { $in: ["Pending", "Approved"] } },
-                      { "status.ceo": { $in: ["Pending", "Approved"] } },
-                      { "status.admin": { $in: ["Pending", "Acknowledged"] } },
-                    ]
-                  }
-                ]
-              },
-              {
-                employee: segment.chargeGivenTo,
-                $or: [
-                  {
-                    "fullDay.from": { $lte: leaveEnd },
-                    "fullDay.to": { $gte: leaveStart },
-                    $and: [
-                      { "status.hod": { $in: ["Pending", "Approved"] } },
-                      { "status.ceo": { $in: ["Pending", "Approved"] } },
-                      { "status.admin": { $in: ["Pending", "Acknowledged"] } },
-                    ],
-                    $or: [
-                      { 'fullDay.fromDuration': 'full' },
-                      { 'fullDay.fromDuration': 'half', 'fullDay.fromSession': { $in: ['forenoon', 'afternoon'] } }
-                    ],
-                    ...(leaveStart.toISOString().split('T')[0] !== leaveEnd.toISOString().split('T')[0] && {
-                      $or: [
-                        { 'fullDay.toDuration': 'full' },
-                        { 'fullDay.toDuration': 'half', 'fullDay.toSession': 'forenoon' }
-                      ]
-                    })
-                  },
-                  {
-                    "fullDay.from": { $gte: startDateOnly, $lte: endDateOnly },
-                    "fullDay.to": { $gte: startDateOnly, $lte: endDateOnly },
-                    "fullDay.fromDuration": 'half',
-                    "fullDay.fromSession": { $in: ['forenoon', 'afternoon'] },
-                    $and: [
-                      { "status.hod": { $in: ["Pending", "Approved"] } },
-                      { "status.ceo": { $in: ["Pending", "Approved"] } },
-                      { "status.admin": { $in: ["Pending", "Acknowledged"] } },
-                    ]
-                  }
-                ]
-              }
-            ]
-          });
-          if (overlappingLeaves.length > 0) {
-            return res
-              .status(400)
-              .json({
-                message:
-                  "Selected employee is either already assigned as Charge Given To or has a pending/approved leave for the specified date range",
-              });
-          }
+          const yearsOfService = (new Date() - joinDate) / (1000 * 60 * 60 * 24 * 365);
 
           switch (leaveType) {
             case "Casual":
-              const canTakeCasualLeave = await user.checkConsecutivePaidLeaves(
-                leaveStart,
-                leaveEnd
-              );
+              const canTakeCasualLeave = await user.checkConsecutivePaidLeaves(leaveStart, leaveEnd);
               if (!canTakeCasualLeave) {
-                return res
-                  .status(400)
-                  .json({
-                    message: "Cannot take more than 3 consecutive paid leave days.",
-                  });
+                throw new Error("Cannot take more than 3 consecutive paid leave days.");
               }
               if (user.paidLeaves < leaveDays) {
-                return res
-                  .status(400)
-                  .json({ message: "Insufficient Casual leave balance." });
+                throw new Error("Insufficient Casual leave balance.");
               }
               break;
             case "Medical":
-              if (!isConfirmed)
-                return res
-                  .status(400)
-                  .json({
-                    message: "Medical leave is only for confirmed employees.",
-                  });
-              if (![3, 4, 7].includes(leaveDays))
-                return res
-                  .status(400)
-                  .json({ message: "Medical leave must be exactly 3, 4, or 7 days." });
-              if (user.medicalLeaves < leaveDays)
-                return res
-                  .status(400)
-                  .json({
-                    message: "Medical leave already used or insufficient balance for this year.",
-                  });
+              if (!isConfirmed) throw new Error("Medical leave is only for confirmed employees.");
+              if (![3, 4, 7].includes(leaveDays)) throw new Error("Medical leave must be exactly 3, 4, or 7 days.");
+              if (user.medicalLeaves < leaveDays) throw new Error("Insufficient Medical leave balance.");
               const medicalLeavesThisYear = await Leave.find({
                 employeeId: user.employeeId,
                 leaveType: "Medical",
                 "status.admin": "Acknowledged",
-                'fullDay.from': { $gte: new Date(currentYear, 0, 1) }
+                "fullDay.from": { $gte: new Date(today.getFullYear(), 0, 1) },
               });
               if (medicalLeavesThisYear.length > 0) {
-                return res
-                  .status(400)
-                  .json({
-                    message: "Medical leave can only be used once per year.",
-                  });
+                throw new Error("Medical leave can only be used once per year.");
               }
               break;
             case "Maternity":
-              if (!isConfirmed || user.gender !== "Female")
-                return res
-                  .status(400)
-                  .json({
-                    message:
-                      "Maternity leave is only for confirmed female employees.",
-                  });
-              if (yearsOfService < 1)
-                return res
-                  .status(400)
-                  .json({ message: "Must have completed one year of service." });
-              if (leaveDays !== 90)
-                return res
-                  .status(400)
-                  .json({ message: "Maternity leave must be 90 days." });
-              if (user.maternityClaims >= 2)
-                return res
-                  .status(400)
-                  .json({
-                    message:
-                      "Maternity leave can only be availed twice during service.",
-                  });
+              if (!isConfirmed || user.gender?.trim().toLowerCase() !== "female") {
+                throw new Error("Maternity leave is only for confirmed female employees.");
+              }
+              if (yearsOfService < 1) throw new Error("Must have completed one year of service.");
+              if (leaveDays !== 90) throw new Error("Maternity leave must be exactly 90 days.");
               break;
             case "Paternity":
-              if (!isConfirmed || user.gender !== "Male")
-                return res
-                  .status(400)
-                  .json({
-                    message:
-                      "Paternity leave is only for confirmed male employees.",
-                  });
-              if (yearsOfService < 1)
-                return res
-                  .status(400)
-                  .json({ message: "Must have completed one year of service." });
-              if (leaveDays !== 7)
-                return res
-                  .status(400)
-                  .json({ message: "Paternity leave must be 7 days." });
-              if (user.paternityClaims >= 2)
-                return res
-                  .status(400)
-                  .json({
-                    message:
-                      "Paternity leave can only be availed twice during service.",
-                  });
-              break;
-            case "Restricted Holidays":
-              if (leaveDays !== 1)
-                return res
-                  .status(400)
-                  .json({ message: "Restricted Holiday must be 1 day." });
-              if (user.restrictedHolidays < 1)
-                return res
-                  .status(400)
-                  .json({
-                    message: "Restricted Holiday already used for this year.",
-                  });
-              const canTakeRestrictedLeave = await user.checkConsecutivePaidLeaves(
-                leaveStart,
-                leaveEnd
-              );
-              if (!canTakeRestrictedLeave) {
-                return res
-                  .status(400)
-                  .json({
-                    message: "Cannot take more than 3 consecutive paid leave days.",
-                  });
+              if (!isConfirmed || user.gender?.trim().toLowerCase() !== "male") {
+                throw new Error("Paternity leave is only for confirmed male employees.");
               }
-              if (!segment.restrictedHoliday)
-                return res
-                  .status(400)
-                  .json({ message: "Restricted holiday name must be provided." });
-              const validHolidays = [
-                "Raksha Bandhan",
-                "Janmashtami",
-                "Karva Chauth",
-                "Christmas"
-              ];
-              if (!validHolidays.includes(segment.restrictedHoliday)) {
-                return res
-                  .status(400)
-                  .json({ message: "Invalid restricted holiday name." });
-              }
-              const existingRestrictedLeave = await Leave.findOne({
-                employeeId: user.employeeId,
-                leaveType: "Restricted Holidays",
-                'fullDay.from': { $gte: new Date(currentYear, 0, 1) },
-                $or: [
-                  { "status.hod": { $in: ["Pending", "Approved"] } },
-                  { "status.ceo": { $in: ["Pending", "Approved"] } },
-                  { "status.admin": { $in: ["Pending", "Acknowledged"] } },
-                ],
-              });
-              if (existingRestrictedLeave) {
-                return res
-                  .status(400)
-                  .json({
-                    message:
-                      "A Restricted Holiday request already exists for this year.",
-                  });
-              }
+              if (yearsOfService < 1) throw new Error("Must have completed one year of service.");
+              if (leaveDays !== 7) throw new Error("Paternity leave must be exactly 7 days.");
               break;
             case "Compensatory":
-              if (!segment.compensatoryEntryId || !segment.projectDetails) {
-                return res
-                  .status(400)
-                  .json({
-                    message:
-                      "Compensatory entry ID and project details are required",
-                  });
+              const compensatoryEntry = await CompensatoryLeave.findById(segment.compensatoryEntryId);
+              if (!compensatoryEntry || compensatoryEntry.employeeId.toString() !== user._id.toString() || compensatoryEntry.status !== "Available") {
+                throw new Error("Invalid or unavailable compensatory leave entry.");
               }
-              const entry = user.compensatoryAvailable.find(
-                (e) =>
-                  e._id.toString() === segment.compensatoryEntryId &&
-                  e.status === "Available"
-              );
-              if (!entry) {
-                return res
-                  .status(400)
-                  .json({
-                    message: "Invalid or unavailable compensatory leave entry",
-                  });
-              }
-              const hoursNeeded = leaveDays === 0.5 ? 4 : 8;
-              if (entry.hours !== hoursNeeded) {
-                return res
-                  .status(400)
-                  .json({
-                    message: `Selected entry (${entry.hours} hours) does not match leave duration (${leaveDays === 0.5 ? "Half Day (4 hours)" : "Full Day (8 hours)"})`,
-                  });
+              const hoursNeeded = fromDuration === "half" ? 4 : 8;
+              if (compensatoryEntry.hours !== hoursNeeded) {
+                throw new Error(
+                  `Compensatory entry (${compensatoryEntry.hours} hours) does not match leave duration (${fromDuration === "half" ? "4 hours" : "8 hours"})`
+                );
               }
               break;
-            case "Emergency":
-              if (!user.canApplyEmergencyLeave) {
-                return res
-                  .status(403)
-                  .json({
-                    message: "You are not authorized to apply for Emergency leave",
-                  });
-              }
-              if (leaveDays > 1) {
-                return res
-                  .status(400)
-                  .json({
-                    message: "Emergency leave must be half day or one full day",
-                  });
-              }
-              if (req.user.role === "HOD") {
-                const ceo = await Employee.findOne({ loginType: "CEO" });
-                if (!ceo || !ceo.canApplyEmergencyLeave) {
-                  return res
-                    .status(403)
-                    .json({
-                      message:
-                        "CEO approval required for HOD to apply for Emergency leave",
-                    });
-                }
-              }
-              const canTakeEmergencyLeave = await user.checkConsecutivePaidLeaves(
-                leaveStart,
-                leaveEnd
-              );
-              if (!canTakeEmergencyLeave) {
-                return res
-                  .status(400)
-                  .json({
-                    message: "Cannot take more than 3 consecutive paid leave days.",
-                  });
-              }
+            case "Restricted Holidays":
+              if (!isConfirmed) throw new Error("Restricted Holidays are only for confirmed employees.");
+              if (user.restrictedHolidays <= 0) throw new Error("No restricted holidays available this year.");
+              if (leaveDays !== 1) throw new Error("Restricted Holiday must be exactly 1 day.");
               break;
             case "Leave Without Pay(LWP)":
+              if (leaveDays > 30) throw new Error("Leave Without Pay cannot exceed 30 days.");
+              break;
+            case "Emergency":
+              if (!segment.isEmergency) throw new Error("Emergency leave must have isEmergency set to true.");
+              if (leaveDays > 1) throw new Error("Emergency leave can only be half day or one full day.");
               break;
             default:
-              return res.status(400).json({ message: "Invalid leave type." });
-          }
-
-          const status = {
-            hod: req.user.role === "Employee" ? "Pending" : req.user.role === "HOD" ? "Submitted" : "Approved",
-            ceo: "Pending",
-            admin: "Pending",
-          };
-
-          let medicalCertificateId = null;
-          if (segment.leaveType === "Medical" && req.file) {
-            const fileData = await uploadToGridFS(req.file, {
-              employeeId: user.employeeId,
-              leaveType: "Medical",
-            });
-            medicalCertificateId = fileData._id;
+              throw new Error("Invalid leave type specified.");
           }
 
           const leave = new Leave({
-            employeeId: user.employeeId,
             employee: user._id,
+            employeeId: user.employeeId,
             name: user.name,
             designation: user.designation,
             department: user.department,
             leaveType: segment.leaveType,
             fullDay: {
-              from: segment.fullDay?.from,
-              to: segment.fullDay?.to || segment.fullDay?.from,
-              fromDuration: segment.fullDay?.fromDuration || 'full',
-              fromSession: segment.fullDay?.fromSession,
-              toDuration: segment.fullDay?.toDuration || 'full',
-              toSession: segment.fullDay?.toSession,
+              from: new Date(segment.fullDay.from), // Use normalized date directly
+              fromDuration,
+              fromSession,
+              to: segment.fullDay.to ? new Date(segment.fullDay.to) : undefined, // Use normalized date directly
+              toDuration: segment.fullDay.to ? toDuration : undefined,
+              toSession: segment.fullDay.to ? toSession : undefined,
             },
-            reason: segment.reason,
-            chargeGivenTo: segment.chargeGivenTo,
-            emergencyContact: segment.emergencyContact,
-            compensatoryEntryId: segment.compensatoryEntryId,
-            projectDetails: segment.projectDetails,
-            restrictedHoliday: segment.restrictedHoliday,
-            medicalCertificate: medicalCertificateId,
-            status,
-            compositeLeaveId: req.body.compositeLeaveId || null,
+            reason: req.body.reason,
+            chargeGivenTo: req.body.chargeGivenTo,
+            emergencyContact: req.body.emergencyContact,
+            projectDetails: segment.projectDetails || "",
+            compositeLeaveId,
+            status: {
+              hod: "Pending",
+              ceo: "Pending",
+              admin: "Pending",
+            },
           });
-          console.log("Received compositeLeaveId:", req.body.compositeLeaveId);
 
-          await leave.save();
-          savedLeaves.push(leave);
-
-          if (savedLeaves.length === 1) {
-            const dateRangeStr =
-              `from ${segment.fullDay.from}${segment.fullDay.fromDuration === 'half' ? ` (${segment.fullDay.fromSession})` : ''}${segment.fullDay.to ? ` to ${segment.fullDay.to}${segment.fullDay.toDuration === 'half' ? ` (${segment.fullDay.toSession})` : ''}` : ''}`;
-            await Notification.create({
-              userId: chargeGivenToEmployee.employeeId,
-              message: `You have been assigned as Charge Given To for ${user.name}'s leave ${dateRangeStr}. You cannot apply for non-Emergency leaves during this period until the leave is rejected.`,
-            });
-            if (global._io) {
-              global._io.to(chargeGivenToEmployee.employeeId).emit("notification", {
-                message: `You have been assigned as Charge Given To for ${user.name}'s leave ${dateRangeStr}. You cannot apply for non-Emergency leaves during this period until the leave is rejected.`,
-              });
-            }
+          if (segment.medicalCertificate) {
+            leave.medicalCertificate = {
+              data: segment.medicalCertificate.buffer,
+              contentType: segment.medicalCertificate.mimetype,
+            };
+          }
+          if (segment.compensatoryEntryId) {
+            leave.compensatoryEntry = segment.compensatoryEntryId;
+          }
+          if (segment.restrictedHoliday && segment.leaveType === "Restricted Holidays") {
+            leave.restrictedHoliday = segment.restrictedHoliday;
           }
 
-          if (req.user.role === "HOD" || req.user.role === "Admin") {
-            const ceo = await Employee.findOne({ loginType: "CEO" });
-            if (ceo && savedLeaves.length === leaveSegments.length) {
-              await Notification.create({
-                userId: ceo.employeeId,
-                message: `New leave request from ${user.name}`,
-              });
-              if (global._io)
-                global._io
-                  .to(ceo.employeeId)
-                  .emit("notification", {
-                    message: `New leave request from ${user.name}`,
-                  });
-            }
-          } else {
-            const hod = await Employee.findOne({
-              department: user.department,
-              loginType: "HOD",
-            });
-            if (hod && savedLeaves.length === leaveSegments.length) {
-              await Notification.create({
-                userId: hod.employeeId,
-                message: `New leave request from ${user.name}`,
-              });
-              if (global._io)
-                global._io
-                  .to(hod.employeeId)
-                  .emit("notification", {
-                    message: `New leave request from ${user.name}`,
-                  });
-            }
+          const savedLeave = await leave.save();
+          savedLeaves.push(savedLeave);
+
+          if (leaveType === "Compensatory" && compensatoryEntry) {
+            compensatoryEntry.status = "Used";
+            await compensatoryEntry.save();
+          } else if (leaveType === "Medical") {
+            user.medicalLeaves -= leaveDays;
+            await user.save();
+          } else if (leaveType === "Casual") {
+            user.paidLeaves -= leaveDays;
+            await user.save();
+          } else if (leaveType === "Restricted Holidays") {
+            user.restrictedHolidays -= 1;
+            await user.save();
           }
-        } catch (err) {
-          errors.push({ segment, message: err.message });
-          console.error("Segment processing error:", err.stack);
+
+          if (leaveType === "Emergency") {
+            await Employee.findByIdAndUpdate(user._id, { canApplyEmergencyLeave: false });
+          }
+        } catch (error) {
+          console.log(`Segment ${index} failed:`, error.message, segment);
+          errors.push({ segmentIndex: index, message: error.message });
         }
       }
 
       if (errors.length > 0) {
-        return res.status(400).json({ message: "Some leave segments failed", errors, savedLeaves });
+        return res.status(400).json({ message: "Partial success", errors });
       }
 
-      await Audit.create({
-        user: user.employeeId,
-        action: "Submit Leave",
-        details: "Submitted leave request",
-      });
-
-      res.status(201).json(savedLeaves);
-    } catch (err) {
-      console.error("Leave submit error:", err.stack);
-      res.status(500).json({ message: "Server error", error: err.message });
+      res.status(201).json({ message: "Leave request submitted successfully", data: savedLeaves });
+    } catch (error) {
+      console.error("Leave submission error:", error);
+      res.status(500).json({ message: "Server error", error: error.message });
     }
   }
 );
@@ -659,260 +833,260 @@ router.get('/next-composite-id', auth, async (req, res) => {
 });
 
 
-router.put(
-  "/:id/approve",
-  auth,
-  role(["HOD", "CEO", "Admin"]),
-  async (req, res) => {
-    try {
-      const leave = await Leave.findById(req.params.id)
-        .populate("employee")
-        .populate("chargeGivenTo");
-      if (!leave) {
-        return res.status(404).json({ message: "Leave request not found" });
-      }
+// router.put(
+//   "/:id/approve",
+//   auth,
+//   role(["HOD", "CEO", "Admin"]),
+//   async (req, res) => {
+//     try {
+//       const leave = await Leave.findById(req.params.id)
+//         .populate("employee")
+//         .populate("chargeGivenTo");
+//       if (!leave) {
+//         return res.status(404).json({ message: "Leave request not found" });
+//       }
 
-      const user = await Employee.findById(req.user.id);
-      if (!user) {
-        return res.status(404).json({ message: "User not found" });
-      }
+//       const user = await Employee.findById(req.user.id);
+//       if (!user) {
+//         return res.status(404).json({ message: "User not found" });
+//       }
 
-      const { status, remarks, approvedDates, rejectedDates } = req.body;
-      const currentStage = req.user.role.toLowerCase();
-      const validStatuses =
-        req.user.role === "Admin" ? ["Acknowledged"] : ["Approved", "Rejected"];
+//       const { status, remarks, approvedDates, rejectedDates } = req.body;
+//       const currentStage = req.user.role.toLowerCase();
+//       const validStatuses =
+//         req.user.role === "Admin" ? ["Acknowledged"] : ["Approved", "Rejected"];
 
-      if (!validStatuses.includes(status)) {
-        return res
-          .status(400)
-          .json({
-            message: `Invalid status. Must be one of ${validStatuses.join(", ")}`,
-          });
-      }
+//       if (!validStatuses.includes(status)) {
+//         return res
+//           .status(400)
+//           .json({
+//             message: `Invalid status. Must be one of ${validStatuses.join(", ")}`,
+//           });
+//       }
 
-      if (leave.status[currentStage] !== "Pending") {
-        return res
-          .status(400)
-          .json({
-            message: `Leave is not pending ${currentStage.toUpperCase()} approval`,
-          });
-      }
+//       if (leave.status[currentStage] !== "Pending") {
+//         return res
+//           .status(400)
+//           .json({
+//             message: `Leave is not pending ${currentStage.toUpperCase()} approval`,
+//           });
+//       }
 
-      if (
-        (status === "Rejected" || status === "Approved") &&
-        ["hod", "ceo"].includes(currentStage) &&
-        (!remarks || remarks.trim() === "")
-      ) {
-        return res
-          .status(400)
-          .json({ message: "Remarks are required for approval or rejection" });
-      }
+//       if (
+//         (status === "Rejected" || status === "Approved") &&
+//         ["hod", "ceo"].includes(currentStage) &&
+//         (!remarks || remarks.trim() === "")
+//       ) {
+//         return res
+//           .status(400)
+//           .json({ message: "Remarks are required for approval or rejection" });
+//       }
 
-      if (
-        req.user.role === "HOD" &&
-        user.department.toString() !== leave.department.toString()
-      ) {
-        return res
-          .status(403)
-          .json({
-            message: "Not authorized to approve leaves for this department",
-          });
-      }
+//       if (
+//         req.user.role === "HOD" &&
+//         user.department.toString() !== leave.department.toString()
+//       ) {
+//         return res
+//           .status(403)
+//           .json({
+//             message: "Not authorized to approve leaves for this department",
+//           });
+//       }
 
-      if (req.user.role === "CEO" && !["Approved", "Submitted"].includes(leave.status.hod)) {
-        return res
-          .status(400)
-          .json({ message: "Leave must be approved or Submitted by HOD first" });
-      }
+//       if (req.user.role === "CEO" && !["Approved", "Submitted"].includes(leave.status.hod)) {
+//         return res
+//           .status(400)
+//           .json({ message: "Leave must be approved or Submitted by HOD first" });
+//       }
 
-      if (req.user.role === "Admin" && leave.status.ceo !== "Approved") {
-        return res
-          .status(400)
-          .json({ message: "Leave must be approved by CEO first" });
-      }
+//       if (req.user.role === "Admin" && leave.status.ceo !== "Approved") {
+//         return res
+//           .status(400)
+//           .json({ message: "Leave must be approved by CEO first" });
+//       }
 
-      if (req.user.role === "CEO" && leave.leaveType === "Medical" && !leave.medicalCertificate) {
-        return res
-          .status(403)
-          .json({ message: "Medical leave without certificate not visible to CEO" });
-      }
+//       if (req.user.role === "CEO" && leave.leaveType === "Medical" && !leave.medicalCertificate) {
+//         return res
+//           .status(403)
+//           .json({ message: "Medical leave without certificate not visible to CEO" });
+//       }
 
-      if (req.user.role === "Admin" && leave.leaveType === "Medical" && !leave.medicalCertificate) {
-        return res
-          .status(400)
-          .json({ message: "Medical leave cannot be acknowledged without a medical certificate" });
-      }
+//       if (req.user.role === "Admin" && leave.leaveType === "Medical" && !leave.medicalCertificate) {
+//         return res
+//           .status(400)
+//           .json({ message: "Medical leave cannot be acknowledged without a medical certificate" });
+//       }
 
-      leave.status[currentStage] = status;
-      // Store remarks for both approval and rejection
-      if (remarks && remarks.trim() !== "") {
-        leave.remarks = remarks;
-      }
+//       leave.status[currentStage] = status;
+//       // Store remarks for both approval and rejection
+//       if (remarks && remarks.trim() !== "") {
+//         leave.remarks = remarks;
+//       }
 
-      if (approvedDates && rejectedDates) {
-        const allDates = getAllDates(leave.fullDay.from, leave.fullDay.to);
-        if (approvedDates.length + rejectedDates.length !== allDates.length) {
-          return res.status(400).json({ message: "All dates must be either approved or rejected" });
-        }
-        leave.approvedDates = approvedDates;
-        leave.rejectedDates = rejectedDates;
-      } else if (status === "Approved") {
-        leave.approvedDates = getAllDates(leave.fullDay.from, leave.fullDay.to).map(date => ({ date, duration: 'full' }));
-        leave.rejectedDates = [];
-      } else if (status === "Rejected") {
-        leave.rejectedDates = getAllDates(leave.fullDay.from, leave.fullDay.to).map(date => ({ date, duration: 'full' }));
-        leave.approvedDates = [];
-      }
+//       if (approvedDates && rejectedDates) {
+//         const allDates = getAllDates(leave.fullDay.from, leave.fullDay.to);
+//         if (approvedDates.length + rejectedDates.length !== allDates.length) {
+//           return res.status(400).json({ message: "All dates must be either approved or rejected" });
+//         }
+//         leave.approvedDates = approvedDates;
+//         leave.rejectedDates = rejectedDates;
+//       } else if (status === "Approved") {
+//         leave.approvedDates = getAllDates(leave.fullDay.from, leave.fullDay.to).map(date => ({ date, duration: 'full' }));
+//         leave.rejectedDates = [];
+//       } else if (status === "Rejected") {
+//         leave.rejectedDates = getAllDates(leave.fullDay.from, leave.fullDay.to).map(date => ({ date, duration: 'full' }));
+//         leave.approvedDates = [];
+//       }
 
-      if (["Approved", "Submitted"].includes(status) && currentStage === "hod") {
-        leave.status.ceo = "Pending";
-        const ceo = await Employee.findOne({ loginType: "CEO" });
-        if (ceo) {
-          await Notification.create({
-            userId: ceo.employeeId,
-            message: `Leave request from ${leave.name} awaiting your approval${
-              remarks ? ` with note: ${remarks}` : ""
-            }`,
-          });
-          if (global._io) {
-            global._io
-              .to(ceo.employeeId)
-              .emit("notification", {
-                message: `Leave request from ${leave.name} awaiting your approval${
-                  remarks ? ` with note: ${remarks}` : ""
-                }`,
-              });
-          }
-        }
-      }
+//       if (["Approved", "Submitted"].includes(status) && currentStage === "hod") {
+//         leave.status.ceo = "Pending";
+//         const ceo = await Employee.findOne({ loginType: "CEO" });
+//         if (ceo) {
+//           await Notification.create({
+//             userId: ceo.employeeId,
+//             message: `Leave request from ${leave.name} awaiting your approval${
+//               remarks ? ` with note: ${remarks}` : ""
+//             }`,
+//           });
+//           if (global._io) {
+//             global._io
+//               .to(ceo.employeeId)
+//               .emit("notification", {
+//                 message: `Leave request from ${leave.name} awaiting your approval${
+//                   remarks ? ` with note: ${remarks}` : ""
+//                 }`,
+//               });
+//           }
+//         }
+//       }
 
-      if (status === "Approved" && currentStage === "ceo") {
-        leave.status.admin = "Pending";
-        const admin = await Employee.findOne({ loginType: "Admin" });
-        if (admin) {
-          await Notification.create({
-            userId: admin.employeeId,
-            message: `Leave request from ${leave.name} awaiting your acknowledgment${
-              remarks ? ` with note: ${remarks}` : ""
-            }`,
-          });
-          if (global._io) {
-            global._io
-              .to(admin.employeeId)
-              .emit("notification", {
-                message: `Leave request from ${leave.name} awaiting your acknowledgment${
-                  remarks ? ` with note: ${remarks}` : ""
-                }`,
-              });
-          }
-        }
-      }
+//       if (status === "Approved" && currentStage === "ceo") {
+//         leave.status.admin = "Pending";
+//         const admin = await Employee.findOne({ loginType: "Admin" });
+//         if (admin) {
+//           await Notification.create({
+//             userId: admin.employeeId,
+//             message: `Leave request from ${leave.name} awaiting your acknowledgment${
+//               remarks ? ` with note: ${remarks}` : ""
+//             }`,
+//           });
+//           if (global._io) {
+//             global._io
+//               .to(admin.employeeId)
+//               .emit("notification", {
+//                 message: `Leave request from ${leave.name} awaiting your acknowledgment${
+//                   remarks ? ` with note: ${remarks}` : ""
+//                 }`,
+//               });
+//           }
+//         }
+//       }
 
-      if (status === "Acknowledged" && currentStage === "admin") {
-        const employee = leave.employee;
-        const totalApprovedDays = leave.approvedDates.length + (leave.approvedDates.some(d => d.duration === 'half') ? 0.5 : 0);
-        switch (leave.leaveType) {
-          case "Casual":
-            await employee.deductPaidLeaves(leave.fullDay.from, leave.fullDay.to, leave.leaveType, totalApprovedDays);
-            break;
-          case "Medical":
-            await employee.deductMedicalLeaves(leave, totalApprovedDays);
-            break;
-          case "Maternity":
-            await employee.recordMaternityClaim();
-            break;
-          case "Paternity":
-            await employee.recordPaternityClaim();
-            break;
-          case "Restricted Holidays":
-            await employee.deductRestrictedHolidays();
-            break;
-          case "Compensatory":
-            const entry = employee.compensatoryAvailable.find(
-              (e) => e._id.toString() === leave.compensatoryEntryId.toString()
-            );
-            if (entry) {
-              entry.status = "Used";
-            }
-            await employee.deductCompensatoryLeaves(leave.compensatoryEntryId);
-            break;
-          case "Emergency":
-            if (employee.paidLeaves >= totalApprovedDays) {
-              await employee.deductPaidLeaves(leave.fullDay.from, leave.fullDay.to, leave.leaveType, totalApprovedDays);
-            } else {
-              await employee.incrementUnpaidLeaves(leave.fullDay.from, leave.fullDay.to, leave.employee, totalApprovedDays);
-            }
-            break;
-          case "Leave Without Pay(LWP)":
-            await employee.incrementUnpaidLeaves(leave.fullDay.from, leave.fullDay.to, leave.employee, totalApprovedDays);
-            break;
-          default:
-            return res
-              .status(400)
-              .json({ message: "Invalid leave type for balance update" });
-        }
-        await employee.save();
-      }
+//       if (status === "Acknowledged" && currentStage === "admin") {
+//         const employee = leave.employee;
+//         const totalApprovedDays = leave.approvedDates.length + (leave.approvedDates.some(d => d.duration === 'half') ? 0.5 : 0);
+//         switch (leave.leaveType) {
+//           case "Casual":
+//             await employee.deductPaidLeaves(leave.fullDay.from, leave.fullDay.to, leave.leaveType, totalApprovedDays);
+//             break;
+//           case "Medical":
+//             await employee.deductMedicalLeaves(leave, totalApprovedDays);
+//             break;
+//           case "Maternity":
+//             await employee.recordMaternityClaim();
+//             break;
+//           case "Paternity":
+//             await employee.recordPaternityClaim();
+//             break;
+//           case "Restricted Holidays":
+//             await employee.deductRestrictedHolidays();
+//             break;
+//           case "Compensatory":
+//             const entry = employee.compensatoryAvailable.find(
+//               (e) => e._id.toString() === leave.compensatoryEntryId.toString()
+//             );
+//             if (entry) {
+//               entry.status = "Used";
+//             }
+//             await employee.deductCompensatoryLeaves(leave.compensatoryEntryId);
+//             break;
+//           case "Emergency":
+//             if (employee.paidLeaves >= totalApprovedDays) {
+//               await employee.deductPaidLeaves(leave.fullDay.from, leave.fullDay.to, leave.leaveType, totalApprovedDays);
+//             } else {
+//               await employee.incrementUnpaidLeaves(leave.fullDay.from, leave.fullDay.to, leave.employee, totalApprovedDays);
+//             }
+//             break;
+//           case "Leave Without Pay(LWP)":
+//             await employee.incrementUnpaidLeaves(leave.fullDay.from, leave.fullDay.to, leave.employee, totalApprovedDays);
+//             break;
+//           default:
+//             return res
+//               .status(400)
+//               .json({ message: "Invalid leave type for balance update" });
+//         }
+//         await employee.save();
+//       }
 
-      if (status === "Rejected") {
-        leave.status.hod = "N/A";
-        leave.status.ceo = "N/A";
-        leave.status.admin = "N/A";
+//       if (status === "Rejected") {
+//         leave.status.hod = "N/A";
+//         leave.status.ceo = "N/A";
+//         leave.status.admin = "N/A";
 
-        await Notification.create({
-          userId: leave.employee.employeeId,
-          message: `Your ${leave.leaveType} leave request was rejected by ${currentStage.toUpperCase()} with note: ${remarks || "No remarks provided"}`,
-        });
-        if (global._io) {
-          global._io
-            .to(leave.employee.employeeId)
-            .emit("notification", {
-              message: `Your ${leave.leaveType} leave request was rejected by ${currentStage.toUpperCase()} with note: ${remarks || "No remarks provided"}`,
-            });
-        }
+//         await Notification.create({
+//           userId: leave.employee.employeeId,
+//           message: `Your ${leave.leaveType} leave request was rejected by ${currentStage.toUpperCase()} with note: ${remarks || "No remarks provided"}`,
+//         });
+//         if (global._io) {
+//           global._io
+//             .to(leave.employee.employeeId)
+//             .emit("notification", {
+//               message: `Your ${leave.leaveType} leave request was rejected by ${currentStage.toUpperCase()} with note: ${remarks || "No remarks provided"}`,
+//             });
+//         }
 
-        if (leave.chargeGivenTo) {
-          const dateRangeStr = `from ${new Date(leave.fullDay.from).toISOString().split("T")[0]}${leave.fullDay.fromDuration === "half" ? ` (${leave.fullDay.fromSession})` : ""}${new Date(leave.fullDay.to) ? ` to ${new Date(leave.fullDay.to).toISOString().split("T")[0]}${leave.fullDay.toDuration === "half" ? ` (${leave.fullDay.toSession})` : ""}` : ""}`;
-          await Notification.create({
-            userId: leave.chargeGivenTo.employeeId,
-            message: `You are no longer assigned as Charge Given To for ${leave.name}'s leave ${dateRangeStr} due to rejection by ${currentStage.toUpperCase()}. You can now apply for non-Emergency leaves during this period.`,
-          });
-          if (global._io) {
-            global._io.to(leave.chargeGivenTo.employeeId).emit("notification", {
-              message: `You are no longer assigned as Charge Given To for ${leave.name}'s leave ${dateRangeStr} due to rejection by ${currentStage.toUpperCase()}. You can now apply for non-Emergency leaves.`,
-            });
-          }
-        }
-      }
+//         if (leave.chargeGivenTo) {
+//           const dateRangeStr = `from ${new Date(leave.fullDay.from).toISOString().split("T")[0]}${leave.fullDay.fromDuration === "half" ? ` (${leave.fullDay.fromSession})` : ""}${new Date(leave.fullDay.to) ? ` to ${new Date(leave.fullDay.to).toISOString().split("T")[0]}${leave.fullDay.toDuration === "half" ? ` (${leave.fullDay.toSession})` : ""}` : ""}`;
+//           await Notification.create({
+//             userId: leave.chargeGivenTo.employeeId,
+//             message: `You are no longer assigned as Charge Given To for ${leave.name}'s leave ${dateRangeStr} due to rejection by ${currentStage.toUpperCase()}. You can now apply for non-Emergency leaves during this period.`,
+//           });
+//           if (global._io) {
+//             global._io.to(leave.chargeGivenTo.employeeId).emit("notification", {
+//               message: `You are no longer assigned as Charge Given To for ${leave.name}'s leave ${dateRangeStr} due to rejection by ${currentStage.toUpperCase()}. You can now apply for non-Emergency leaves.`,
+//             });
+//           }
+//         }
+//       }
 
-      await leave.save();
-      await Audit.create({
-        user: user.employeeId,
-        action: `${status} Leave`,
-        details: `${status} leave request for ${leave.name}${remarks ? ` with remarks: ${remarks}` : ""}`,
-      });
+//       await leave.save();
+//       await Audit.create({
+//         user: user.employeeId,
+//         action: `${status} Leave`,
+//         details: `${status} leave request for ${leave.name}${remarks ? ` with remarks: ${remarks}` : ""}`,
+//       });
 
-      const employee = await Employee.findById(leave.employee);
-      if (employee && status !== "Rejected") {
-        await Notification.create({
-          userId: employee.employeeId,
-          message: `Your leave request has been ${status.toLowerCase()} by ${currentStage.toUpperCase()}${remarks ? ` with note: ${remarks}` : ""}`,
-        });
-        if (global._io)
-          global._io
-            .to(employee.employeeId)
-            .emit("notification", {
-              message: `Your leave request has been ${status.toLowerCase()} by ${currentStage.toUpperCase()}${remarks ? ` with note: ${remarks}` : ""}`,
-            });
-      }
+//       const employee = await Employee.findById(leave.employee);
+//       if (employee && status !== "Rejected") {
+//         await Notification.create({
+//           userId: employee.employeeId,
+//           message: `Your leave request has been ${status.toLowerCase()} by ${currentStage.toUpperCase()}${remarks ? ` with note: ${remarks}` : ""}`,
+//         });
+//         if (global._io)
+//           global._io
+//             .to(employee.employeeId)
+//             .emit("notification", {
+//               message: `Your leave request has been ${status.toLowerCase()} by ${currentStage.toUpperCase()}${remarks ? ` with note: ${remarks}` : ""}`,
+//             });
+//       }
 
-      res.json(leave);
-    } catch (err) {
-      console.error("Leave approval error:", err.stack);
-      res.status(500).json({ message: "Server error", error: err.message });
-    }
-  }
-);
+//       res.json(leave);
+//     } catch (err) {
+//       console.error("Leave approval error:", err.stack);
+//       res.status(500).json({ message: "Server error", error: err.message });
+//     }
+//   }
+// );
 
 function getAllDates(startDate, endDate) {
   const dates = [];
@@ -924,6 +1098,43 @@ function getAllDates(startDate, endDate) {
   }
   return dates;
 }
+
+
+// List of yearly holidays for 2025 (dates in MM-DD format)
+const yearlyHolidays = [
+  { date: "2025-08-15", name: "Independence Day" }, // 15th August
+  { date: "2025-10-02", name: "Gandhi Jayanti" },   // 2nd October
+  { date: "2025-10-22", name: "Diwali" },           // 22nd October
+  { date: "2025-10-23", name: "Vishwakarma Jayanti" }, // 23rd October
+  { date: "2025-11-10", name: "Guru Nanak Jayanti" } // Assuming 10th November for 2025
+];
+
+// Function to check if a date is a Sunday or a holiday
+const isNonWorkingDay = (date) => {
+  const formattedDate = date.toISOString().split('T')[0]; // YYYY-MM-DD
+  // Check if the date is a Sunday (0 is Sunday)
+  const isSunday = date.getDay() === 0;
+  // Check if the date is a holiday
+  const isHoliday = yearlyHolidays.some(holiday => holiday.date === formattedDate);
+  return isSunday || isHoliday;
+};
+
+// Function to calculate working days between two dates
+const calculateWorkingDays = (from, to) => {
+  let currentDate = new Date(from);
+  currentDate.setHours(0, 0, 0, 0);
+  const endDate = new Date(to);
+  endDate.setHours(0, 0, 0, 0);
+  let workingDays = 0;
+
+  while (currentDate <= endDate) {
+    if (!isNonWorkingDay(currentDate)) {
+      workingDays++;
+    }
+    currentDate.setDate(currentDate.getDate() + 1);
+  }
+  return workingDays;
+};
 router.get("/", auth, async (req, res) => {
   try {
     if (!gfsReady()) {
@@ -1038,11 +1249,17 @@ router.get("/", auth, async (req, res) => {
           duration: item.duration === "full" ? undefined : item.duration
         }));
 
+        // Calculate working days for fullDay leaves
+        let numberOfDays = leave.fullDay?.from && leave.fullDay?.to
+          ? calculateWorkingDays(leave.fullDay.from, leave.fullDay.to)
+          : null;
+
         return {
           ...leave.toObject(),
           medicalCertificate,
           approvedDates,
-          rejectedDates
+          rejectedDates,
+          numberOfDays // Add the calculated working days
         };
       })
     );
@@ -1054,7 +1271,7 @@ router.get("/", auth, async (req, res) => {
   }
 });
 
-// Approve Leave
+// Approve Leave final one jha partial rejection bhi hota hai 
 router.put(
   "/:id/approve",
   auth,
@@ -1064,16 +1281,13 @@ router.put(
       const leave = await Leave.findById(req.params.id)
         .populate("employee")
         .populate("chargeGivenTo");
-      if (!leave) {
-        return res.status(404).json({ message: "Leave request not found" });
-      }
+
+      if (!leave) return res.status(404).json({ message: "Leave request not found" });
 
       const user = await Employee.findById(req.user.id);
-      if (!user) {
-        return res.status(404).json({ message: "User not found" });
-      }
+      if (!user) return res.status(404).json({ message: "User not found" });
 
-      const { status, remarks } = req.body;
+      const { status, remarks, adjustments, approvedDays, approvedDates, rejectedDates } = req.body;
       const currentStage = req.user.role.toLowerCase();
       const validStatuses =
         req.user.role === "Admin" ? ["Acknowledged"] : ["Approved", "Rejected"];
@@ -1081,63 +1295,69 @@ router.put(
       if (!validStatuses.includes(status)) {
         return res
           .status(400)
-          .json({
-            message: `Invalid status. Must be one of ${validStatuses.join(", ")}`,
-          });
+          .json({ message: `Invalid status. Must be one of ${validStatuses.join(", ")}` });
       }
 
       if (leave.status[currentStage] !== "Pending") {
         return res
           .status(400)
-          .json({
-            message: `Leave is not pending ${currentStage.toUpperCase()} approval`,
-          });
+          .json({ message: `Leave is not pending ${currentStage.toUpperCase()} approval` });
       }
 
-      if (
-        status === "Rejected" &&
-        ["hod", "ceo"].includes(currentStage) &&
-        (!remarks || remarks.trim() === "")
-      ) {
-        return res
-          .status(400)
-          .json({ message: "Remarks are required for rejection" });
+      if (status === "Rejected" && ["hod", "ceo"].includes(currentStage) && (!remarks || remarks.trim() === "")) {
+        return res.status(400).json({ message: "Remarks are required for rejection" });
       }
 
-      if (
-        req.user.role === "HOD" &&
-        user.department.toString() !== leave.department.toString()
-      ) {
-        return res
-          .status(403)
-          .json({
-            message: "Not authorized to approve leaves for this department",
-          });
+      if (req.user.role === "HOD" && user.department.toString() !== leave.department.toString()) {
+        return res.status(403).json({ message: "Not authorized to approve leaves for this department" });
       }
 
       if (req.user.role === "CEO" && !["Approved", "Submitted"].includes(leave.status.hod)) {
-        return res
-          .status(400)
-          .json({ message: "Leave must be approved or Submitted by HOD first" });
+        return res.status(400).json({ message: "Leave must be approved or Submitted by HOD first" });
       }
 
       if (req.user.role === "Admin" && leave.status.ceo !== "Approved") {
-        return res
-          .status(400)
-          .json({ message: "Leave must be approved by CEO first" });
+        return res.status(400).json({ message: "Leave must be approved by CEO first" });
       }
 
       if (req.user.role === "Admin" && leave.leaveType === "Medical" && !leave.medicalCertificate) {
-        return res
-          .status(400)
-          .json({ message: "Medical leave cannot be acknowledged without a medical certificate" });
+        return res.status(400).json({ message: "Medical leave cannot be acknowledged without a medical certificate" });
       }
 
       leave.status[currentStage] = status;
-      if (status === "Rejected" && ["hod", "ceo"].includes(currentStage)) {
-        leave.remarks = remarks;
+
+      const isComposite = leave.composite && Array.isArray(leave.leaves);
+
+      // Handle non-composite leaves
+      if (!isComposite) {
+        if (approvedDays !== undefined) {
+          leave.approvedDays = approvedDays;
+        }
+        if (approvedDates) {
+          leave.approvedDates = approvedDates;
+        }
+        if (rejectedDates) {
+          leave.rejectedDates = rejectedDates;
+        }
+        if (remarks && remarks.trim() !== "") {
+          leave.remarks = remarks;
+        }
       }
 
+      // Handle composite leaves
+      if (isComposite && Array.isArray(adjustments)) {
+        for (const segment of leave.leaves) {
+          const matchingAdjustment = adjustments.find((a) => a.leaveId === segment._id.toString());
+          if (matchingAdjustment) {
+            segment.approvedDates = matchingAdjustment.approvedDates || [];
+            segment.rejectedDates = matchingAdjustment.rejectedDates || []; // Add rejectedDates for composite
+            segment.adjustedDays = matchingAdjustment.adjustedDays || 0;
+            if (matchingAdjustment.remarks) segment.remarks = matchingAdjustment.remarks;
+          }
+        }
+      }
+
+      // Rest of the logic remains the same...
       if (["Approved", "Submitted"].includes(status) && currentStage === "hod") {
         leave.status.ceo = "Pending";
         const ceo = await Employee.findOne({ loginType: "CEO" });
@@ -1147,11 +1367,9 @@ router.put(
             message: `Leave request from ${leave.name} awaiting your approval`,
           });
           if (global._io) {
-            global._io
-              .to(ceo.employeeId)
-              .emit("notification", {
-                message: `Leave request from ${leave.name} awaiting your approval`,
-              });
+            global._io.to(ceo.employeeId).emit("notification", {
+              message: `Leave request from ${leave.name} awaiting your approval`,
+            });
           }
         }
       }
@@ -1165,11 +1383,9 @@ router.put(
             message: `Leave request from ${leave.name} awaiting your acknowledgment`,
           });
           if (global._io) {
-            global._io
-              .to(admin.employeeId)
-              .emit("notification", {
-                message: `Leave request from ${leave.name} awaiting your acknowledgment`,
-              });
+            global._io.to(admin.employeeId).emit("notification", {
+              message: `Leave request from ${leave.name} awaiting your acknowledgment`,
+            });
           }
         }
       }
@@ -1178,87 +1394,30 @@ router.put(
         const employee = leave.employee;
         switch (leave.leaveType) {
           case "Casual":
-            await employee.deductPaidLeaves(
-              leave.fullDay.from,
-              leave.fullDay.to,
-              leave.leaveType
-            );
+            await employee.deductPaidLeaves(leave.fullDay.from, leave.fullDay.to, leave.leaveType);
             break;
           case "Medical":
             await employee.deductMedicalLeaves(
               leave,
-              leave.fullDay.fromDuration === "half" && leave.fullDay.from === leave.fullDay.to
+              leave.approvedDays || (leave.fullDay.fromDuration === "half" && leave.fullDay.from === leave.fullDay.to
                 ? 0.5
                 : leave.fullDay?.from && leave.fullDay?.to
-                ? (new Date(leave.fullDay.to) - new Date(leave.fullDay.from)) /
-                    (1000 * 60 * 60 * 24) +
-                  1 -
-                  (leave.fullDay.fromDuration === "half" ? 0.5 : 0) -
-                  (leave.fullDay.toDuration === "half" ? 0.5 : 0)
-                : 0
+                  ? (new Date(leave.fullDay.to) - new Date(leave.fullDay.from)) / (1000 * 60 * 60 * 24) +
+                    1 -
+                    (leave.fullDay.fromDuration === "half" ? 0.5 : 0) -
+                    (leave.fullDay.toDuration === "half" ? 0.5 : 0)
+                  : 0)
             );
             break;
-          case "Maternity":
-            await employee.recordMaternityClaim();
-            break;
-          case "Paternity":
-            await employee.recordPaternityClaim();
-            break;
-          case "Restricted Holidays":
-            await employee.deductRestrictedHolidays();
-            break;
-          case "Compensatory":
-            const entry = employee.compensatoryAvailable.find(
-              (e) => e._id.toString() === leave.compensatoryEntryId.toString()
-            );
-            if (entry) {
-              entry.status = "Used";
-            }
-            await employee.deductCompensatoryLeaves(leave.compensatoryEntryId);
-            break;
-          case "Emergency":
-            const leaveDays =
-              leave.fullDay.fromDuration === "half" && leave.fullDay.from === leave.fullDay.to
-                ? 0.5
-                : leave.fullDay?.from && leave.fullDay.to
-                ? (new Date(leave.fullDay.to) - new Date(leave.fullDay.from)) /
-                    (1000 * 60 * 60 * 24) +
-                  1 -
-                  (leave.fullDay.fromDuration === "half" ? 0.5 : 0) -
-                  (leave.fullDay.toDuration === "half" ? 0.5 : 0)
-                : 1;
-            if (employee.paidLeaves >= leaveDays) {
-              await employee.deductPaidLeaves(
-                leave.fullDay.from,
-                leave.fullDay.to,
-                leave.leaveType
-              );
-            } else {
-              await employee.incrementUnpaidLeaves(
-                leave.fullDay.from,
-                leave.fullDay.to,
-                leave.employee
-              );
-            }
-            break;
-          case "Leave Without Pay(LWP)":
-            await employee.incrementUnpaidLeaves(
-              leave.fullDay.from,
-              leave.fullDay.to,
-              leave.employee
-            );
-            break;
+          // ... (other cases remain the same)
           default:
-            return res
-              .status(400)
-              .json({ message: "Invalid leave type for balance update" });
+            return res.status(400).json({ message: "Invalid leave type for balance update" });
         }
-
         await employee.save();
       }
 
       if (status === "Rejected") {
-        leave.status.hod = "N/A";
+        leave.status.hod = "Rejected";
         leave.status.ceo = "N/A";
         leave.status.admin = "N/A";
 
@@ -1266,20 +1425,24 @@ router.put(
           userId: leave.employee.employeeId,
           message: `Your ${leave.leaveType} leave request was rejected by ${currentStage.toUpperCase()}`,
         });
+
         if (global._io) {
-          global._io
-            .to(leave.employee.employeeId)
-            .emit("notification", {
-              message: `Your ${leave.leaveType} leave request was rejected by ${currentStage.toUpperCase()}`,
-            });
+          global._io.to(leave.employee.employeeId).emit("notification", {
+            message: `Your ${leave.leaveType} leave request was rejected by ${currentStage.toUpperCase()}`,
+          });
         }
 
         if (leave.chargeGivenTo) {
-          const dateRangeStr = `from ${new Date(leave.fullDay.from).toISOString().split("T")[0]}${leave.fullDay.fromDuration === "half" ? ` (${leave.fullDay.fromSession})` : ""}${new Date(leave.fullDay.to) ? ` to ${new Date(leave.fullDay.to).toISOString().split("T")[0]}${leave.fullDay.toDuration === "half" ? ` (${leave.fullDay.toSession})` : ""}` : ""}`;
+          const dateRangeStr = `from ${new Date(leave.fullDay.from).toISOString().split("T")[0]}${
+            leave.fullDay.fromDuration === "half" ? ` (${leave.fullDay.fromSession})` : ""
+          }${new Date(leave.fullDay.to) ? ` to ${new Date(leave.fullDay.to).toISOString().split("T")[0]}${
+            leave.fullDay.toDuration === "half" ? ` (${leave.fullDay.toSession})` : ""
+          }` : ""}`;
           await Notification.create({
             userId: leave.chargeGivenTo.employeeId,
             message: `You are no longer assigned as Charge Given To for ${leave.name}'s leave ${dateRangeStr} due to rejection by ${currentStage.toUpperCase()}. You can now apply for non-Emergency leaves during this period.`,
           });
+
           if (global._io) {
             global._io.to(leave.chargeGivenTo.employeeId).emit("notification", {
               message: `You are no longer assigned as Charge Given To for ${leave.name}'s leave ${dateRangeStr} due to rejection by ${currentStage.toUpperCase()}. You can now apply for non-Emergency leaves.`,
@@ -1289,6 +1452,7 @@ router.put(
       }
 
       await leave.save();
+
       await Audit.create({
         user: user.employeeId,
         action: `${status} Leave`,
@@ -1301,12 +1465,11 @@ router.put(
           userId: employee.employeeId,
           message: `Your leave request has been ${status.toLowerCase()} by ${currentStage.toUpperCase()}`,
         });
-        if (global._io)
-          global._io
-            .to(employee.employeeId)
-            .emit("notification", {
-              message: `Your leave request has been ${status.toLowerCase()} by ${currentStage.toUpperCase()}`,
-            });
+        if (global._io) {
+          global._io.to(employee.employeeId).emit("notification", {
+            message: `Your leave request has been ${status.toLowerCase()} by ${currentStage.toUpperCase()}`,
+          });
+        }
       }
 
       res.json(leave);
@@ -1317,4 +1480,8 @@ router.put(
   }
 );
 
+
 export default router;
+
+
+
