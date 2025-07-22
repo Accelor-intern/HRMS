@@ -21,11 +21,16 @@ dotenv.config();
 const app = express();
 const server = http.createServer(app);
 
+app.get('/', (req, res) => {
+  res.send('HRMS Backend is running!');
+});
+
 const allowedOrigins = [
   'http://192.168.1.20:5001',
   'http://localhost:5174',
   'http://localhost:3000',
   'http://192.168.59.225:5001',
+  'https://hrms-rho-brown.vercel.app',
 ];
 
 app.use(cors({
@@ -88,87 +93,30 @@ app.use('/api/holidays', holidaysRouter);
 mongoose.connect(process.env.MONGO_URI)
   .then(() => {
     console.log('MongoDB connected');
-    // Wait for GridFS to be ready with a timeout
+    const PORT = process.env.PORT || 5000;
+    server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
+    // GridFS and cron jobs can run asynchronously
     const checkGridFS = setInterval(() => {
       if (gfsReady()) {
         clearInterval(checkGridFS);
         console.log('GridFS initialized successfully');
 
-        // Schedule processPunchLogAttendance at 9:30 AM and 2:00 PM daily
+        // Schedule your cron jobs here (as shown in your code)
         cron.schedule('39 09 * * *', async () => {
           console.log('Running processPunchLogAttendance at 09:33 AM...');
           await processPunchLogAttendance();
           console.log('processPunchLogAttendance at 09:33 AM completed.');
         }, { timezone: 'Asia/Kolkata' });
 
-     
-
-        //  // Schedule processPunchLogOD at 9:30 AM and 2:00 PM daily
-        // cron.schedule('29 09 * * *', async () => {
-        //   console.log('Running processPunchLogOD at 09:33 AM...');
-        //   await processPunchLogOD();
-        //   console.log('processPunchLogOD at 09:33 AM completed.');
-        // }, { timezone: 'Asia/Kolkata' });
-
-        // cron.schedule('00 14 * * *', async () => {
-        //   console.log('Running syncAttendance at 2:00 PM...');
-        //   await syncAttendance();
-        //   console.log('syncAttendance at 2:00 PM completed.');
-        // }, { timezone: 'Asia/Kolkata' });
-
-      //  // Schedule processLateArrivalsAndAbsents at 9:35 AM daily
-      //   cron.schedule('14 11 * * *', async () => {
-      //     console.log('Running processLateArrivalsAndAbsents at 11:21 AM...');
-      //     await processLateArrivalsAndAbsents();
-      //     console.log('processLateArrivalsAndAbsents at 11:21 AM completed.');
-      //   }, { timezone: 'Asia/Kolkata' });
-
-        //  // Schedule updateAttendanceWithLeaves at 9:35 AM daily
-        // cron.schedule('20 13 * * *', async () => {
-        //   console.log('Running updateAttendanceWithLeaves at 11:52 AM...');
-        //   await updateAttendanceWithLeaves();
-        //   console.log('updateAttendanceWithLeaves at 11:52 AM completed.');
-        // }, { timezone: 'Asia/Kolkata' });
-
-        //  // Schedule updateAttendanceWithOD at 9:35 AM daily
-        // cron.schedule('42 13 * * *', async () => {
-        //   console.log('Running updateAttendanceWithOD at 11:52 AM...');
-        //   await updateAttendanceWithOD();
-        //   console.log('updateAttendanceWithOD at 11:52 AM completed.');
-        // }, { timezone: 'Asia/Kolkata' });
-
-        // // Schedule processUnclaimedOT at 12:30 AM daily
-        // cron.schedule('35 9 * * *', async () => {
-        //   console.log('Running processUnclaimedOT at 9:30 AM... for the timing at 9:30 AM');
-        //   await processUnclaimedOT();
-        //   console.log('processUnclaimedOT at 9:30 AM completed.');
-        // }, { timezone: 'Asia/Kolkata' });
-
-        // // Schedule checkAbsences at midnight daily
-        // cron.schedule('36 9 * * *', async () => {
-        //   console.log('Running checkAbsences at midnight...');
-        //   await checkAbsences();
-        //   console.log('checkAbsences at midnight completed.');
-        // }, { timezone: 'Asia/Kolkata' });
-
-        
-
-        //  //Schedule processLateArrivalStatus at 9:39 AM daily
-        // cron.schedule('10 10 * * *', async () => {
-        //   console.log('Running processLateArrivalStatus at 16:43 pm...');
-        //   await processLateArrivalStatus();
-        //   console.log('processLateArrivalStatus at 16:43 pm completed.');
-        // }, { timezone: 'Asia/Kolkata' });
-
-        const PORT = process.env.PORT || 5000;
-        server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+        // Add other cron jobs as needed
       }
-    }, 100); // Check every 100ms
-    // Timeout after 10 seconds if GridFS isn't ready
+    }, 100);
+
     setTimeout(() => {
       if (!gfsReady()) {
         console.error('GridFS failed to initialize within 10 seconds');
-        process.exit(1);
+        // Optionally log a warning but don't exit
       }
     }, 10000);
   })
