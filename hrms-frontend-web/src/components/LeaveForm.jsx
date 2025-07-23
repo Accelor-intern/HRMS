@@ -719,11 +719,14 @@ const calculateLeaveDays = (segment) => {
     return balances;
   };
 
-  const isAddLeaveDisabled = () => {
-    const lastSegment = leaveSegments[leaveSegments.length - 1];
-    return getTotalLeaveDays() >= 3 || 
-           (lastSegment.dates.fromDuration === "half" && lastSegment.dates.fromSession === "forenoon");
-  };
+ const isAddLeaveDisabled = () => {
+  const lastSegment = leaveSegments[leaveSegments.length - 1];
+  return (
+    (getTotalLeaveDays() >= 3 && !lastSegment.leaveType === "Medical") ||
+    (lastSegment.dates.fromDuration === "half" && lastSegment.dates.fromSession === "forenoon") ||
+    (lastSegment.dates.toDuration === "half" && lastSegment.dates.toSession === "forenoon")
+  );
+};
 
   return (
     <ContentLayout title="Apply for Leave">
@@ -1234,5 +1237,4 @@ const calculateLeaveDays = (segment) => {
 }
 
 export default LeaveForm;
-
 
