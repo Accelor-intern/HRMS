@@ -28,6 +28,7 @@ const allowedOrigins = [
   'http://localhost:3000',
   'http://192.168.59.225:5001',
   'https://hrms-rho-brown.vercel.app',
+  'https://hrms-0fcn.onrender.com',
 ];
 
 app.get('/', (req, res) => {
