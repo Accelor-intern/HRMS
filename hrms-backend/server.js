@@ -34,6 +34,7 @@ const allowedOrigins = [
 app.get('/', (req, res) => {
   res.send('HRMS Backend is running!');
 });
+
 app.get('/health', (req, res) => {
   res.send('OK');
 });
