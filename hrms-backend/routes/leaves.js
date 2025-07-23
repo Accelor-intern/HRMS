@@ -1106,7 +1106,7 @@ const yearlyHolidays = [
   { date: "2025-10-02", name: "Gandhi Jayanti" },   // 2nd October
   { date: "2025-10-22", name: "Diwali" },           // 22nd October
   { date: "2025-10-23", name: "Vishwakarma Jayanti" }, // 23rd October
-  { date: "2025-11-10", name: "Guru Nanak Jayanti" } // Assuming 10th November for 2025
+  { date: "2025-11-05", name: "Guru Nanak Jayanti" } // Assuming 05th November for 2025
 ];
 
 // Function to check if a date is a Sunday or a holiday
