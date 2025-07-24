@@ -521,6 +521,24 @@ router.post(
       const errors = [];
       const savedLeaves = [];
 
+      // Define holiday list and isHoliday function
+      const holidayList = [
+        { month: 0, day: 26 }, // Republic Day
+        { month: 2, day: 14 }, // Holi
+        { month: 7, day: 15 }, // Independence Day
+        { month: 9, day: 2 }, // Gandhi Jayanti
+        { month: 9, day: 21 }, // Dussehra
+        { month: 9, day: 22 }, // Diwali
+        { month: 10, day: 5 }, // Christmas
+      ];
+
+      const isHoliday = (date) => {
+        return (
+          holidayList.some((h) => date.getDate() === h.day && date.getMonth() === h.month) ||
+          date.getDay() === 0 // Sunday
+        );
+      };
+
       for (const [index, segment] of leaveSegments.entries()) {
         try {
           if (!segment.leaveType) throw new Error("Leave Type is required");
@@ -566,15 +584,22 @@ router.post(
             }
             if (leaveStart.toISOString().split("T")[0] === leaveEnd.toISOString().split("T")[0]) {
               if (fromDuration === "full" && toDuration === "full") {
-                leaveDays = 1;
+                leaveDays = segment.leaveType === "Casual" && isHoliday(leaveStart) ? 0 : 1;
               } else if (fromDuration === "half" && toDuration === "half" && fromSession === "afternoon" && toSession === "forenoon") {
-                leaveDays = 0.5;
+                leaveDays = segment.leaveType === "Casual" && isHoliday(leaveStart) ? 0 : 0.5;
               } else {
                 throw new Error("Invalid duration combination for same-day leave");
               }
             } else {
-              const daysDiff = Math.floor((leaveEnd - leaveStart) / (1000 * 60 * 60 * 24)) + 1;
-              leaveDays = fromDuration === "half" && toDuration === "half" ? daysDiff - 1 : daysDiff;
+              let daysDiff = 0;
+              let current = new Date(leaveStart);
+              while (current <= leaveEnd) {
+                if (segment.leaveType !== "Casual" || !isHoliday(current)) {
+                  daysDiff += 1;
+                }
+                current.setDate(current.getDate() + 1);
+              }
+              leaveDays = daysDiff;
               if (fromDuration === "half") leaveDays -= 0.5;
               if (toDuration === "half") leaveDays -= 0.5;
             }

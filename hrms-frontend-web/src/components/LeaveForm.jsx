@@ -165,22 +165,55 @@ const handleSegmentChange = (index, e) => {
         ...newSegments[index],
         dates: { ...newSegments[index].dates, toSession: value },
       };
-    } else if (name === `to-${index}`) {
-      const fromDate = new Date(newSegments[index].dates.from);
-      const toDate = new Date(value);
-      const daysDiff = Math.ceil((toDate - fromDate) / (1000 * 60 * 60 * 24));
-      const isLastDay = daysDiff <= 3 && newSegments[index].dates.fromDuration === "half" && newSegments[index].dates.fromSession === "afternoon";
+} else if (name === `to-${index}`) {
+  const fromDate = new Date(newSegments[index].dates.from);
+  const toDate = new Date(e.target.value);
+  const leaveType = newSegments[index].leaveType;
 
-      newSegments[index] = {
-        ...newSegments[index],
-        dates: {
-          ...newSegments[index].dates,
-          to: value,
-          toDuration: isLastDay ? "half" : newSegments[index].dates.toDuration,
-          toSession: isLastDay ? "forenoon" : newSegments[index].dates.toSession,
-        },
-      };
-    } else if (name.includes("dates")) {
+  // Simulate full-day selection for this segment
+  const testSegment = {
+    ...newSegments[index],
+    dates: {
+      ...newSegments[index].dates,
+      to: e.target.value,
+      toDuration: "full",
+      toSession: "",
+    },
+  };
+
+  // Simulate the full segment array
+  const updatedSegments = [...leaveSegments];
+  updatedSegments[index] = testSegment;
+
+  // Total days if full day is allowed
+  const projectedDays = updatedSegments.reduce(
+    (sum, seg) => sum + calculateLeaveDays(seg),
+    0
+  );
+
+  const shouldForceHalfDay = leaveType !== "Medical" && projectedDays > 3;
+
+  // ✅ Final set in state
+  newSegments[index] = {
+    ...newSegments[index],
+    dates: {
+      ...newSegments[index].dates,
+      to: e.target.value,
+      toDuration: shouldForceHalfDay ? "half" : newSegments[index].dates.toDuration,
+      toSession: shouldForceHalfDay ? "forenoon" : newSegments[index].dates.toSession,
+    },
+  };
+
+  console.log("CALCULATION:", {
+    from: fromDate.toDateString(),
+    to: toDate.toDateString(),
+    forcedHalf: shouldForceHalfDay,
+    totalDaysProjected: projectedDays,
+  });
+}
+
+
+ else if (name.includes("dates")) {
       const field = name.split(".")[1];
       newSegments[index] = {
         ...newSegments[index],
@@ -309,17 +342,32 @@ const calculateLeaveDays = (segment) => {
   let days = 0;
   let current = new Date(fromDate);
   while (current <= toDate) {
-    if (!isHoliday(current) || isRestrictedHoliday(current)) {
-      days += 1;
+    // For Casual Leave, exclude Sundays and yearly holidays
+    if (segment.leaveType === "Casual") {
+      if (!isHoliday(current) || isRestrictedHoliday(current)) {
+        days += 1;
+      }
+    } else {
+      // For other leave types, include restricted holidays but exclude regular holidays
+      if (!isHoliday(current) || isRestrictedHoliday(current)) {
+        days += 1;
+      }
     }
     current.setDate(current.getDate() + 1);
   }
+
+  // Adjust for half-day selections
   if (segment.dates.fromDuration === "half") days -= 0.5;
   if (segment.dates.toDuration === "half" && segment.dates.to) days -= 0.5;
+
   // Ensure 0.5 days for single-day half-day
-  if (fromDate.toDateString() === toDate.toDateString() && segment.dates.fromDuration === "half") {
+  if (
+    fromDate.toDateString() === toDate.toDateString() &&
+    segment.dates.fromDuration === "half"
+  ) {
     return 0.5;
   }
+
   return days > 0 ? days : 0;
 };
 
@@ -624,7 +672,18 @@ const calculateLeaveDays = (segment) => {
         } else if (!maxDate || fromDate > maxDate) {
           maxDate = fromDate;
         }
-        totalDays += calculateLeaveDays(segment);
+       if (segment.dates.from) {
+  const from = new Date(segment.dates.from);
+  const to = segment.dates.to ? new Date(segment.dates.to) : from;
+  const rawDiff = Math.floor((to - from) / (1000 * 60 * 60 * 24)) + 1;
+
+  let adjustment = 0;
+  if (segment.dates.fromDuration === "half") adjustment -= 0.5;
+  if (segment.dates.toDuration === "half" && segment.dates.to) adjustment -= 0.5;
+
+  totalDays += rawDiff + adjustment;
+}
+
       }
     });
 
@@ -719,14 +778,27 @@ const calculateLeaveDays = (segment) => {
     return balances;
   };
 
- const isAddLeaveDisabled = () => {
+const isAddLeaveDisabled = () => {
   const lastSegment = leaveSegments[leaveSegments.length - 1];
-  return (
-    (getTotalLeaveDays() >= 3 && !lastSegment.leaveType === "Medical") ||
-    (lastSegment.dates.fromDuration === "half" && lastSegment.dates.fromSession === "forenoon") ||
-    (lastSegment.dates.toDuration === "half" && lastSegment.dates.toSession === "forenoon")
-  );
+  const fields = lastSegment?.dates || {};
+
+  const isIncomplete =
+    !lastSegment.leaveType ||
+    !fields.from ||
+    (fields.fromDuration === "half" && !fields.fromSession) ||
+    (fields.to && fields.toDuration === "half" && !fields.toSession);
+
+  const isLogicalBlock =
+    getTotalLeaveDays() >= 3 && lastSegment.leaveType !== "Medical";
+
+  const isWeirdHalfDayCase =
+    (fields.fromDuration === "half" && fields.fromSession === "forenoon") ||
+    (fields.toDuration === "half" && fields.toSession === "forenoon");
+
+  return isIncomplete || isLogicalBlock || isWeirdHalfDayCase;
 };
+
+
 
   return (
     <ContentLayout title="Apply for Leave">

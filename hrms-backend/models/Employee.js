@@ -388,27 +388,67 @@ employeeSchema.methods.comparePassword = async function(password) {
   return await bcrypt.compare(password, this.password);
 };
 
-// Method to check for three consecutive paid leaves
-employeeSchema.methods.checkConsecutivePaidLeaves = async function(newLeaveStart, newLeaveEnd) {
+// In Employee.js, replace the checkConsecutivePaidLeaves method
+employeeSchema.methods.checkConsecutivePaidLeaves = async function (newLeaveStart, newLeaveEnd) {
   const normalizeDate = (date) => {
     const d = new Date(date);
     d.setHours(0, 0, 0, 0);
     return d;
   };
 
+  const holidayList = [
+    { month: 0, day: 26 }, // Republic Day
+    { month: 2, day: 14 }, // Holi
+    { month: 7, day: 15 }, // Independence Day
+    { month: 9, day: 2 }, // Gandhi Jayanti
+    { month: 9, day: 21 }, // Dussehra
+    { month: 9, day: 22 }, // Diwali
+    { month: 10, day: 5 }, // Guru Nanak Jayenti
+  ];
+
+  const isHoliday = (date) => {
+    return (
+      holidayList.some((h) => date.getDate() === h.day && date.getMonth() === h.month) ||
+      date.getDay() === 0 // Sunday
+    );
+  };
+
   newLeaveStart = normalizeDate(newLeaveStart);
   newLeaveEnd = normalizeDate(newLeaveEnd);
 
-  const newLeaveDays = newLeaveStart.getTime() === newLeaveEnd.getTime() ? 0.5 : ((newLeaveEnd - newLeaveStart) / (1000 * 60 * 60 * 24)) + 1;
-  if (newLeaveDays > 3) {
-    return false; // No paid leaves allowed for more than 3 consecutive days
+  let newLeaveDays = 0;
+  let current = new Date(newLeaveStart);
+  while (current <= newLeaveEnd) {
+    if (!isHoliday(current)) {
+      newLeaveDays += 1;
+    }
+    current.setDate(current.getDate() + 1);
   }
 
+  // Adjust for half-day leaves
+  const leave = await Leave.findOne({
+    employeeId: this.employeeId,
+    $or: [
+      { 'fullDay.from': newLeaveStart, 'fullDay.to': newLeaveEnd },
+      { 'halfDay.date': newLeaveStart },
+    ],
+  });
+
+  if (leave && leave.fullDay) {
+    if (leave.fullDay.fromDuration === 'half') newLeaveDays -= 0.5;
+    if (leave.fullDay.toDuration === 'half' && leave.fullDay.to) newLeaveDays -= 0.5;
+  }
+
+  if (newLeaveDays > 3) {
+    return false; // Exceeds 3 consecutive non-holiday days
+  }
+
+  // Check existing approved leaves for overlap
   const leaves = await Leave.find({
     employeeId: this.employeeId,
-    leaveType: { $in: ['Casual', 'Medical', 'Maternity', 'Paternity', 'Restricted Holidays', 'Emergency'] }, // Added Emergency leave type
+    leaveType: { $in: ['Casual', 'Medical', 'Maternity', 'Paternity', 'Restricted Holidays', 'Emergency'] },
     'status.hod': 'Approved',
-    'status.admin': 'Approved',
+    'status.admin': 'Acknowledged',
     'status.ceo': 'Approved',
     $or: [
       {
@@ -424,11 +464,21 @@ employeeSchema.methods.checkConsecutivePaidLeaves = async function(newLeaveStart
   let totalDays = newLeaveDays;
   for (const leave of leaves) {
     if (leave.halfDay?.date) {
-      totalDays += 0.5;
+      const date = normalizeDate(leave.halfDay.date);
+      if (!isHoliday(date)) totalDays += 0.5;
     } else if (leave.fullDay?.from && leave.fullDay?.to) {
-      const from = normalizeDate(leave.fullDay.from);
-      const to = normalizeDate(leave.fullDay.to);
-      totalDays += ((to - from) / (1000 * 60 * 60 * 24)) + 1;
+      let from = normalizeDate(leave.fullDay.from);
+      let to = normalizeDate(leave.fullDay.to);
+      let days = 0;
+      while (from <= to) {
+        if (!isHoliday(from)) {
+          days += 1;
+        }
+        from.setDate(from.getDate() + 1);
+      }
+      if (leave.fullDay.fromDuration === 'half') days -= 0.5;
+      if (leave.fullDay.toDuration === 'half' && leave.fullDay.to) days -= 0.5;
+      totalDays += days;
     }
   }
 
