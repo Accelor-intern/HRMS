@@ -91,9 +91,10 @@ function Dashboard() {
           contractualEmployees: statsData.contractualEmployees || 0,
           internEmployees: statsData.internEmployees || 0,
           presentToday: statsData.presentToday || 0,
-          pendingLeaves: leaveRecords.length,
-          pendingOD: odRecords.length,
-          pendingPunchMissed: punchMissedRecords.length,
+         pendingLeaves: statsData.pendingLeaves || 0,
+pendingOD: statsData.pendingOD || 0,
+pendingPunchMissed: statsData.pendingPunchMissed || 0,
+
           attendance: filteredAttendance,
         });
 
@@ -362,21 +363,45 @@ function Dashboard() {
               <p className="text-xl font-bold text-green-700">View Attendance Record</p>
             </CardContent>
           </Card>
-          <Card className="w-full h-40 bg-gradient-to-br from-yellow-100 to-yellow-200 shadow-md hover:shadow-lg transition-shadow cursor-pointer" onClick={() => navigate('/hod/approve-leave')}>
+          <Card className="w-full h-40 bg-gradient-to-br from-yellow-100 to-yellow-200 shadow-md hover:shadow-lg transition-shadow cursor-pointer" 
+          onClick={() => {
+  if (user.loginType === 'HOD') navigate('/hod/approve-leave');
+  else if (user.loginType === 'CEO') navigate('/ceo/approve-leaves');
+  else if (user.loginType === 'Admin') navigate('/admin/approve-leave');
+}}
+>
             <CardHeader className="p-4"></CardHeader>
             <CardContent className="p-4 text-center">
               <p className="text-xl font-bold text-yellow-700">Approve Leave</p>
-              <p className="text-md text-yellow-600">Pending: 2</p>
+             <p className="text-md text-yellow-600">Pending: {data.pendingLeaves}</p>
+
             </CardContent>
           </Card>
-          <Card className="w-full h-40 bg-gradient-to-br from-purple-100 to-purple-200 shadow-md hover:shadow-lg transition-shadow cursor-pointer" onClick={() => navigate('/hod/approve-od')}>
+          <Card className="w-full h-40 bg-gradient-to-br from-purple-100 to-purple-200 shadow-md hover:shadow-lg transition-shadow cursor-pointer" 
+         // onClick={() => navigate('/hod/approve-od')}
+                   onClick={() => {
+  if (user.loginType === 'HOD') navigate('/hod/approve-od');
+  else if (user.loginType === 'CEO') navigate('/ceo/approve-od');
+  else if (user.loginType === 'Admin') navigate('/admin/approve-od');
+}}
+          
+          >
             <CardHeader className="p-4"></CardHeader>
             <CardContent className="p-4 text-center">
               <p className="text-xl font-bold text-purple-700">Approve Office Duty (OD)</p>
-              <p className="text-md text-purple-600">Pending: 6</p>
+            <p className="text-md text-purple-600">Pending: {data.pendingOD}</p>
             </CardContent>
           </Card>
-          <Card className="w-full h-40 bg-gradient-to-br from-teal-100 to-teal-200 shadow-md hover:shadow-lg transition-shadow cursor-pointer" onClick={() => navigate('/hod/approve-punch-missed')}>
+          <Card className="w-full h-40 bg-gradient-to-br from-teal-100 to-teal-200 shadow-md hover:shadow-lg transition-shadow cursor-pointer" 
+         // onClick={() => navigate('/hod/approve-punch-missed')}
+            onClick={() => {
+  if (user.loginType === 'HOD') navigate('/hod/approve-punch-missed');
+  else if (user.loginType === 'CEO') navigate('/ceo/approve-punch-missed');
+  else if (user.loginType === 'Admin') navigate('/admin/approve-punch-missed');
+}}
+          
+          
+          >
             <CardHeader className="p-4"></CardHeader>
             <CardContent className="p-4 text-center">
               <p className="text-xl font-bold text-teal-700">Approve Punch Missed</p>

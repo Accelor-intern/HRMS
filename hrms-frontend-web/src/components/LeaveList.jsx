@@ -1624,6 +1624,7 @@ function LeaveList() {
                                     aria-label={`Adjust days for ${leave?.leaveType || "leave"} ${leave?._id}`}
                                   />
                                 </div>
+                                
                                 {leaveAdjustments?.[leave?._id]?.adjustedDays !== undefined &&
                                   leaveAdjustments[leave?._id]?.adjustedDays < (getLeaveDuration?.(leave) || 0) && (
                                     <div className="flex flex-col gap-2">
