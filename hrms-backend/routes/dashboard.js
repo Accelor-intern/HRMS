@@ -567,7 +567,7 @@ router.get('/attendance', auth, async (req, res) => {
    let targetDateIST = new Date(istTodayStart);
 
 
-   const startOfDayUTC = new Date(targetDateIST.getTime());
+   const startOfDayUTC = new Date(targetDateIST.getTime() - 5.5 * 60 * 60 * 1000);
 const endOfDayUTC = new Date(startOfDayUTC);
 endOfDayUTC.setHours(23, 59, 59, 999);
 
