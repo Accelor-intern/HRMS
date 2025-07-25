@@ -139,7 +139,13 @@ let excludedEmployeeIds = [];
           OT.countDocuments(adminMatch),
           PunchMissed.countDocuments(adminPunchMissedMatch),
         ]);
-        pendingApprovals = leaveCount + odCount + otCount + punchMissedCount;
+      pendingApprovals = {
+  leaves: leaveCount,
+  ods: odCount,
+  ots: otCount,
+  punchMissed: punchMissedCount
+};
+
         console.log(`Admin pending counts: Leaves=${leaveCount}, ODs=${odCount}, OTs=${otCount}, PunchMissed=${punchMissedCount}`);
       } else if (loginType === 'CEO') {
         const ceoMatch = {
@@ -157,7 +163,13 @@ let excludedEmployeeIds = [];
           OT.countDocuments(ceoMatch),
           PunchMissed.countDocuments(ceoPunchMissedMatch),
         ]);
-        pendingApprovals = leaveCount + odCount + otCount + punchMissedCount;
+      pendingApprovals = {
+  leaves: leaveCount,
+  ods: odCount,
+  ots: otCount,
+  punchMissed: punchMissedCount
+};
+
         console.log(`CEO pending counts: Leaves=${leaveCount}, ODs=${odCount}, OTs=${otCount}, PunchMissed=${punchMissedCount}`);
       } else if (loginType === 'HOD') {
         let hodAdminEmployeeIds = [];
@@ -180,7 +192,13 @@ let excludedEmployeeIds = [];
           OT.countDocuments(hodMatch),
           PunchMissed.countDocuments(hodMatch),
         ]);
-        pendingApprovals = leaveCount + odCount + otCount + punchMissedCount;
+      pendingApprovals = {
+  leaves: leaveCount,
+  ods: odCount,
+  ots: otCount,
+  punchMissed: punchMissedCount
+};
+
         console.log(`HOD pending counts: Leaves=${leaveCount}, ODs=${odCount}, OTs=${otCount}, PunchMissed=${punchMissedCount}`);
       }
       console.log(`Pending approvals for ${loginType}: ${pendingApprovals}`);
@@ -197,7 +215,11 @@ let excludedEmployeeIds = [];
       ojtEmployees: employeeCounts.OJT,
       apprenticeEmployees: employeeCounts.Apprentice,
       presentToday,
-      pendingLeaves: pendingApprovals,
+    pendingLeaves: pendingApprovals.leaves,
+pendingOD: pendingApprovals.ods,
+pendingOT: pendingApprovals.ots,
+pendingPunchMissed: pendingApprovals.punchMissed,
+
     };
 
     console.log(`Dashboard stats for ${loginType}:`, stats);
