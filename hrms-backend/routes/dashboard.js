@@ -564,16 +564,13 @@ router.get('/attendance', auth, async (req, res) => {
     istCutoffTime.setHours(18, 30, 0, 0);
 
     // If before 6:30 PM, show today's attendance
-    let targetDateIST = new Date(istTodayStart);
-    if (istNow >= istCutoffTime) {
-      console.log('Current IST time past 6:30 PM, clearing dashboard...');
-      return res.json([]);
-    }
+   let targetDateIST = new Date(istTodayStart);
 
-    // Convert IST to UTC range
-    const startOfDayUTC = new Date(targetDateIST.getTime() );
-    const endOfDayUTC = new Date(startOfDayUTC);
-    endOfDayUTC.setHours(23, 59, 59, 999);
+
+   const startOfDayUTC = new Date(targetDateIST.getTime());
+const endOfDayUTC = new Date(startOfDayUTC);
+endOfDayUTC.setHours(23, 59, 59, 999);
+
 
     console.log('Querying attendance from:', startOfDayUTC, 'to:', endOfDayUTC);
 
@@ -603,6 +600,65 @@ router.get('/attendance', auth, async (req, res) => {
     res.status(500).json({ message: 'Server error', error: err.message });
   }
 });
+
+
+// router.get('/attendance', auth, async (req, res) => {
+//   try {
+//     // Get UTC time
+//     const nowUTC = new Date();
+
+//     // Convert to IST manually (UTC + 5:30)
+//     const offsetIST = 5.5 * 60 * 60 * 1000;
+//     const nowIST = new Date(nowUTC.getTime() + offsetIST);
+
+//     // Get "today" in IST at midnight
+//     const istTodayStart = new Date(nowIST);
+//     istTodayStart.setHours(0, 0, 0, 0);
+
+//     // Set cutoff time as 6:30 PM IST
+//     const istCutoffTime = new Date(istTodayStart);
+//     istCutoffTime.setHours(18, 30, 0, 0);
+
+//     // If after 6:30 PM IST, return empty
+//     if (nowIST >= istCutoffTime) {
+//       console.log('Current IST time past 6:30 PM, clearing dashboard...');
+//       return res.json([]);
+//     }
+
+//     // Convert IST date range back to UTC for DB query
+//     const startOfDayUTC = new Date(istTodayStart.getTime() - offsetIST);
+//     const endOfDayUTC = new Date(startOfDayUTC);
+//     endOfDayUTC.setHours(23, 59, 59, 999);
+
+//     console.log('Querying attendance from (UTC):', startOfDayUTC.toISOString(), 'to', endOfDayUTC.toISOString());
+
+//     const attendanceRecords = await Attendance.find({
+//       logDate: { $gte: startOfDayUTC, $lte: endOfDayUTC },
+//     }).select('employeeId timeIn status');
+
+//     const employeeDetails = await Employee.find({
+//       employeeId: { $in: attendanceRecords.map(record => record.employeeId) },
+//     }).select('employeeId name department').populate('department', 'name');
+
+//     const attendanceData = attendanceRecords.map(record => {
+//       const employee = employeeDetails.find(emp => emp.employeeId === record.employeeId);
+//       return {
+//         employeeId: record.employeeId,
+//         name: employee ? employee.name : 'Unknown',
+//         department: employee?.department?.name || 'N/A',
+//         logInTime: record.timeIn,
+//         status: record.status,
+//       };
+//     });
+
+//     console.log('Fetched attendance data:', attendanceData);
+//     res.json(attendanceData);
+//   } catch (err) {
+//     console.error('Error fetching attendance records:', err);
+//     res.status(500).json({ message: 'Server error', error: err.message });
+//   }
+// });
+
 
 
 export default router;
