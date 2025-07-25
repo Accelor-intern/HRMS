@@ -109,7 +109,7 @@ mongoose.connect(process.env.MONGO_URI)
         console.log('GridFS initialized successfully');
 
         // Schedule your cron jobs here (as shown in your code)
-        cron.schedule('39 09 * * *', async () => {
+        cron.schedule('26 10 * * *', async () => {
           console.log('Running processPunchLogAttendance at 09:33 AM...');
           await processPunchLogAttendance();
           console.log('processPunchLogAttendance at 09:33 AM completed.');
