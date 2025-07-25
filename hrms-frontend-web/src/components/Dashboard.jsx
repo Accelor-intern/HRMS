@@ -268,7 +268,7 @@ pendingPunchMissed: statsData.pendingPunchMissed || 0,
     : 'HoD Panel'
 }>
 
-      <div className="flex flex-col items-center w-full">
+      <div className="flex flex-col items-center w-full px-4 overflow-x-hidden">
         {/* Greeting, Quote, Birthday, Anniversary, and Holiday Messages */}
         <div className="w-full max-w-[1200px] bg-gradient-to-r from-blue-50 to-indigo-100 p-6 rounded-lg mb-6 text-center shadow-lg relative">
           <h1 className="text-3xl font-bold text-indigo-800">{`${greeting}, ${user?.name || 'User'}!`}</h1>
@@ -350,7 +350,7 @@ pendingPunchMissed: statsData.pendingPunchMissed || 0,
 
 
         {/* Existing Action Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-6 justify-items-center w-full max-w-[1200px] mb-8">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6 w-full px-2 max-w-full mb-8">
           <Card className="w-full h-40 bg-gradient-to-br from-red-50 to-red-100 shadow-md hover:shadow-lg transition-shadow cursor-pointer" onClick={() => navigate('/hod/shift-management')}>
             <CardHeader className="p-4"></CardHeader>
             <CardContent className="p-4 text-center">

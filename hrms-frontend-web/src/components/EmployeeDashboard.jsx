@@ -253,7 +253,8 @@ if (user.employeeType === 'Confirmed') {
 
   return (
     <ContentLayout title="My Workspace">
-      <div className="flex flex-col items-center w-full">
+    <div className="flex flex-col items-center w-full px-4 overflow-x-hidden">
+
         {/* Greeting and Birthday */}
         <div className="w-full max-w-[1200px] bg-gradient-to-r from-blue-50 to-indigo-100 p-6 rounded-lg mb-6 text-center shadow-lg">
           <h1 className="text-3xl font-bold text-indigo-800">{`${greeting}, ${user?.name || 'HOD'}!`}</h1>
@@ -378,7 +379,7 @@ if (user.employeeType === 'Confirmed') {
 
 
         {/* Attendance Records */}
-        <div className="w-full max-w-[1200px] mb-8">
+     <div className="w-full max-w-[1200px] px-4 sm:px-6 md:px-8 mb-8 overflow-x-hidden">
           <Card className="bg-white shadow-lg rounded-lg p-6">
             <CardHeader className="flex flex-row justify-between items-center mb-4">
               <CardTitle className="text-xl font-semibold text-gray-800">Attendance Records (Today)</CardTitle>
@@ -437,7 +438,8 @@ if (user.employeeType === 'Confirmed') {
         </div>
 
         {/* Existing Attendance Chart */}
-        <div className="mt-8 grid grid-cols-1 gap-6 w-full max-w-[1200px]">
+      <div className="mt-8 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6 w-full max-w-full px-4">
+
          
           <Card>
             <CardHeader>
