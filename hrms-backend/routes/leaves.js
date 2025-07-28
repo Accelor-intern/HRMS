@@ -491,7 +491,8 @@ router.post(
               toSession: toDuration === "half" ? (segment.fullDay?.toSession || "forenoon") : null,
             },
             compensatoryEntryId: segment.compensatoryEntryId || "",
-            restrictedHoliday: segment.restrictedHoliday || "", // Only include if explicitly provided
+       restrictedHoliday: segment.leaveType === "Restricted Holidays" ? (segment.restrictedHoliday || "") : "",
+
             projectDetails: segment.projectDetails || "",
             medicalCertificate: files.find((f) => f.fieldname?.includes(`segments[${index}][medicalCertificate]`)) || null,
           };
@@ -582,15 +583,26 @@ router.post(
             if (toDuration === "half" && !toSession) {
               throw new Error("toSession is required for half-day toDuration");
             }
-            if (leaveStart.toISOString().split("T")[0] === leaveEnd.toISOString().split("T")[0]) {
-              if (fromDuration === "full" && toDuration === "full") {
-                leaveDays = segment.leaveType === "Casual" && isHoliday(leaveStart) ? 0 : 1;
-              } else if (fromDuration === "half" && toDuration === "half" && fromSession === "afternoon" && toSession === "forenoon") {
-                leaveDays = segment.leaveType === "Casual" && isHoliday(leaveStart) ? 0 : 0.5;
-              } else {
-                throw new Error("Invalid duration combination for same-day leave");
-              }
-            } else {
+  if (leaveStart.toISOString().split("T")[0] === leaveEnd.toISOString().split("T")[0]) {
+  if (fromDuration === "full" && (toDuration === "full" || !toDuration)) {
+    leaveDays = 1;
+  } else if (
+    fromDuration === "half" &&
+    (!toDuration || toDuration === "half") &&
+    (!toSession || toSession === "forenoon")
+  ) {
+    leaveDays = 0.5;
+  } else if (
+    fromDuration === "half" &&
+    toDuration === "full"
+  ) {
+    leaveDays = 1; // Allow half to full on same day (if your policy permits it)
+  } else {
+    throw new Error("Invalid duration combination for same-day leave");
+  }
+}
+
+else {
               let daysDiff = 0;
               let current = new Date(leaveStart);
               while (current <= leaveEnd) {

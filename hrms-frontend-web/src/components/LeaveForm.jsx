@@ -22,6 +22,10 @@ import "../App.css";
 
 function LeaveForm() {
   const { user } = useContext(AuthContext);
+  const getToday = () => dayjs().startOf("day");
+const getSevenDaysAgo = () => getToday().subtract(7, "day");
+const getSevenDaysLater = (fromDate) => dayjs(fromDate).add(7, "day");
+
 
   const istOffset = 5.5 * 60 * 60 * 1000;
   const today = new Date();
@@ -72,6 +76,7 @@ function LeaveForm() {
   ]);
   const [showLeaveRules, setShowLeaveRules] = useState(false);
   const [validationErrors, setValidationErrors] = useState([]);
+  
 
   useEffect(() => {
     const fetchEmployeeData = async () => {
@@ -166,51 +171,34 @@ const handleSegmentChange = (index, e) => {
         dates: { ...newSegments[index].dates, toSession: value },
       };
 } else if (name === `to-${index}`) {
-  const fromDate = new Date(newSegments[index].dates.from);
   const toDate = new Date(e.target.value);
   const leaveType = newSegments[index].leaveType;
 
-  // Simulate full-day selection for this segment
-  const testSegment = {
-    ...newSegments[index],
-    dates: {
-      ...newSegments[index].dates,
-      to: e.target.value,
-      toDuration: "full",
-      toSession: "",
-    },
-  };
+  // Step 1: Temporarily simulate full-day to-date
+  newSegments[index].dates.to = e.target.value;
+  newSegments[index].dates.toDuration = "full";
+  newSegments[index].dates.toSession = "";
 
-  // Simulate the full segment array
-  const updatedSegments = [...leaveSegments];
-  updatedSegments[index] = testSegment;
-
-  // Total days if full day is allowed
-  const projectedDays = updatedSegments.reduce(
+  // Step 2: Calculate leave using updated newSegments
+  const simulatedDays = newSegments.reduce(
     (sum, seg) => sum + calculateLeaveDays(seg),
     0
   );
 
-  const shouldForceHalfDay = leaveType !== "Medical" && projectedDays > 3;
+  const forceHalfDay = leaveType !== "Medical" && simulatedDays > 3;
 
-  // ✅ Final set in state
-  newSegments[index] = {
-    ...newSegments[index],
-    dates: {
-      ...newSegments[index].dates,
-      to: e.target.value,
-      toDuration: shouldForceHalfDay ? "half" : newSegments[index].dates.toDuration,
-      toSession: shouldForceHalfDay ? "forenoon" : newSegments[index].dates.toSession,
-    },
-  };
+  // Step 3: Apply forced half day if needed
+  if (forceHalfDay) {
+    newSegments[index].dates.toDuration = "half";
+    newSegments[index].dates.toSession = "forenoon";
+  }
 
-  console.log("CALCULATION:", {
-    from: fromDate.toDateString(),
-    to: toDate.toDateString(),
-    forcedHalf: shouldForceHalfDay,
-    totalDaysProjected: projectedDays,
-  });
+  console.log("Projected Leave Days:", simulatedDays, "| Forced Half Day?", forceHalfDay);
 }
+
+
+
+
 
 
  else if (name.includes("dates")) {
@@ -485,7 +473,7 @@ const calculateLeaveDays = (segment) => {
 
   const validateFormData = (segments, commonFields) => {
     const errors = [];
-    if (!commonFields.reason) errors.push("Reason is required");
+   if (!commonFields.reason) errors.push("Reason is required");
     if (!commonFields.chargeGivenTo) errors.push("Charge Given To is required");
     if (!commonFields.emergencyContact) errors.push("Emergency Contact is required");
 
@@ -532,9 +520,12 @@ const calculateLeaveDays = (segment) => {
       formData.append(`segments[${index}][fullDay][from]`, segment.dates.from || "");
       formData.append(`segments[${index}][fullDay][fromDuration]`, segment.dates.fromDuration || "full");
       formData.append(`segments[${index}][fullDay][fromSession]`, segment.dates.fromSession || "");
-      formData.append(`segments[${index}][fullDay][to]`, segment.dates.to || "");
-      formData.append(`segments[${index}][fullDay][toDuration]`, segment.dates.to ? (segment.dates.toDuration || "full") : "");
-      formData.append(`segments[${index}][fullDay][toSession]`, segment.dates.to ? (segment.dates.toSession || "") : "");
+    if (segment.dates.to) {
+  formData.append(`segments[${index}][fullDay][to]`, segment.dates.to);
+  formData.append(`segments[${index}][fullDay][toDuration]`, segment.dates.toDuration || "full");
+  formData.append(`segments[${index}][fullDay][toSession]`, segment.dates.toSession || "");
+}
+
       formData.append(`segments[${index}][compensatoryEntryId]`, segment.compensatoryEntryId || "");
       formData.append(`segments[${index}][restrictedHoliday]`, segment.restrictedHoliday || "");
       formData.append(`segments[${index}][projectDetails]`, segment.projectDetails || "");
@@ -548,6 +539,7 @@ const calculateLeaveDays = (segment) => {
         headers: { "Content-Type": "multipart/form-data" },
       });
       toast.success("Leave request submitted successfully");
+      alert("Leave request submitted successfully");
       setLeaveSegments([
         {
           leaveType: "",
@@ -778,9 +770,19 @@ const calculateLeaveDays = (segment) => {
     return balances;
   };
 
+
+const isToDateDisabled = (segment) => {
+  if (!segment || !segment.dates) return false;
+  const { fromDuration, fromSession, from, to } = segment.dates;
+  return fromDuration === "half" && fromSession === "forenoon";
+};
+
 const isAddLeaveDisabled = () => {
   const lastSegment = leaveSegments[leaveSegments.length - 1];
   const fields = lastSegment?.dates || {};
+
+  const isFromDateForenoonHalfDay =
+    fields.fromDuration === "half" && fields.fromSession === "forenoon";
 
   const isIncomplete =
     !lastSegment.leaveType ||
@@ -791,12 +793,21 @@ const isAddLeaveDisabled = () => {
   const isLogicalBlock =
     getTotalLeaveDays() >= 3 && lastSegment.leaveType !== "Medical";
 
-  const isWeirdHalfDayCase =
-    (fields.fromDuration === "half" && fields.fromSession === "forenoon") ||
-    (fields.toDuration === "half" && fields.toSession === "forenoon");
+  const isToDateForenoonHalfDay =
+    fields.to &&
+    fields.toDuration === "half" &&
+    fields.toSession === "forenoon";
 
-  return isIncomplete || isLogicalBlock || isWeirdHalfDayCase;
+  return (
+    isIncomplete ||
+    isLogicalBlock ||
+    isToDateForenoonHalfDay ||
+    isFromDateForenoonHalfDay
+  );
 };
+
+
+
 
 
 
@@ -884,6 +895,29 @@ const isAddLeaveDisabled = () => {
                             </SelectContent>
                           </Select>
                         </div>
+                             {segment.leaveType === "Restricted Holidays" && (
+                          <div>
+                            <Label htmlFor={`restrictedHoliday-${index}`} className="text-blue-800">
+                              RH Reference
+                            </Label>
+                            <Select
+                            
+                              onValueChange={(value) => handleRestrictedHolidayChange(index, value)}
+                              value={segment.restrictedHoliday}
+                            >
+                              <SelectTrigger type="button" >
+                                <SelectValue placeholder="Select holiday" />
+                              </SelectTrigger>
+                           <SelectContent>
+  <SelectItem >Raksha Bandhan — 09/08/2025</SelectItem>
+  <SelectItem value="2025-08-16">Janmashtami — 16/08/2025</SelectItem>
+  <SelectItem value="2025-10-09">Karva Chauth — 09/10/2025</SelectItem>
+  <SelectItem value="2025-12-25">Christmas — 25/12/2025</SelectItem>
+</SelectContent>
+
+                            </Select>
+                          </div>
+                        )}
                     <div>
   <Label htmlFor={`dates.from-${index}`} className="text-blue-800">From Date</Label>
   <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
@@ -902,7 +936,7 @@ const isAddLeaveDisabled = () => {
       disabled={segment.isEmergency || index > 0}
       className="w-full sm:w-40"
     />
-    {!segment.isEmergency && (
+    {segment.leaveType !== "Restricted Holidays" && !segment.isEmergency && (
       <div className="flex flex-col gap-2">
         <div className="flex items-center gap-4">
           <label className="flex items-center text-sm">
@@ -928,25 +962,27 @@ const isAddLeaveDisabled = () => {
             Half Day
           </label>
         </div>
-        {segment.dates.fromDuration === "half" && (
-          <div className="mt-2">
-            <select
-              name={`fromSession-${index}`}
-              value={segment.dates.fromSession}
-              onChange={(e) => handleSegmentChange(index, e)}
-              className="border rounded px-3 py-2 w-full sm:w-40 text-sm"
-            >
-              <option value="forenoon">Forenoon</option>
-              <option value="afternoon">Afternoon</option>
-            </select>
-          </div>
-        )}
+     {segment.dates.fromDuration === "half" && (
+  <div className="mt-2">
+    <select
+      name={`fromSession-${index}`}
+      value={segment.dates.fromSession}
+      onChange={(e) => handleSegmentChange(index, e)}
+      className="border rounded px-3 py-2 w-full sm:w-40 text-sm"
+    >
+      <option value="forenoon">Forenoon</option>
+      {/* Only allow 'afternoon' for the first leave segment */}
+      {index === 0 && <option value="afternoon">Afternoon</option>}
+    </select>
+  </div>
+)}
+
       </div>
     )}
   </div>
 </div>
 
-{!segment.isEmergency && (
+{segment.leaveType !== "Restricted Holidays" && !segment.isEmergency && (
   <div>
     <Label htmlFor={`dates.to-${index}`} className="text-blue-800">To Date</Label>
     <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
@@ -958,6 +994,7 @@ const isAddLeaveDisabled = () => {
         onChange={(e) => handleSegmentChange(index, e)}
         min={segment.dates.from || minDate.toISOString().split("T")[0]}
         max={getMaxDateForToDate(index).toISOString().split("T")[0]}
+        disabled={isToDateDisabled(segment)}
         className="w-full sm:w-40"
       />
       {segment.dates.from !== segment.dates.to && segment.dates.to && (
@@ -986,19 +1023,19 @@ const isAddLeaveDisabled = () => {
               Half Day
             </label>
           </div>
-          {segment.dates.toDuration === "half" && (
-            <div className="mt-2">
-              <select
-                name={`toSession-${index}`}
-                value={segment.dates.toSession}
-                onChange={(e) => handleSegmentChange(index, e)}
-                className="border rounded px-3 py-2 w-full sm:w-40 text-sm"
-              >
-                <option value="forenoon">Forenoon</option>
-                <option value="afternoon">Afternoon</option>
-              </select>
-            </div>
-          )}
+         {segment.dates.toDuration === "half" && (
+  <div className="mt-2">
+    <select
+      name={`toSession-${index}`}
+      value={segment.dates.toSession}
+      onChange={(e) => handleSegmentChange(index, e)}
+      className="border rounded px-3 py-2 w-full sm:w-40 text-sm"
+    >
+      <option value="forenoon">Forenoon</option>
+    </select>
+  </div>
+)}
+
         </div>
       )}
     </div>
@@ -1091,28 +1128,7 @@ const isAddLeaveDisabled = () => {
                             </div>
                           </>
                         )}
-                        {segment.leaveType === "Restricted Holidays" && (
-                          <div>
-                            <Label htmlFor={`restrictedHoliday-${index}`} className="text-blue-800">
-                              Restricted Holiday
-                            </Label>
-                            <Select
-                              onValueChange={(value) => handleRestrictedHolidayChange(index, value)}
-                              value={segment.restrictedHoliday}
-                            >
-                              <SelectTrigger>
-                                <SelectValue placeholder="Select holiday" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {restrictedHolidayDates.map((holiday, idx) => (
-                                  <SelectItem key={idx} value={holiday.toISOString().split("T")[0]}>
-                                    {holiday.toLocaleDateString()}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </div>
-                        )}
+                   
                         {segment.leaveType === "Medical" && segment.dates.fromDuration === "full" && (
                           <div>
                             <Label htmlFor={`medicalCertificate-${index}`} className="text-blue-800">
