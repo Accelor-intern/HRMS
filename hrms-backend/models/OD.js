@@ -12,14 +12,15 @@ const odSchema = new mongoose.Schema({
   timeIn: { type: String },
   purpose: { type: String, required: true },
   placeUnitVisit: { type: String, required: true },
+  initialStatus: { type: String, enum: ['Pending', 'Allowed', 'Denied'], default: 'Pending' },
   status: {
     hod: { type: String, enum: ['Pending', 'Approved', 'Rejected', 'Submitted', 'N/A'], default: 'Pending' },
     admin: { type: String, enum: ['Pending', 'Acknowledged', 'N/A'], default: 'Pending' },
-    ceo: { type: String, enum: ['Pending', 'Approved', 'Rejected', 'N/A'], default: 'Pending' },
+    ceo: { type: String, enum: ['Pending', 'Approved', 'Rejected', 'N/A'], default: 'N/A' },
   },
   statusHistory: [{
-    stage: { type: String, enum: ['hod', 'ceo', 'admin'], required: true },
-    status: { type: String, enum: ['Pending', 'Approved', 'Rejected', 'Acknowledged', 'Submitted', 'N/A'], required: true },
+    stage: { type: String, enum: ['initial', 'hod', 'admin', 'ceo'], required: true },
+    status: { type: String, enum: ['Pending', 'Allowed', 'Denied', 'Approved', 'Rejected', 'Acknowledged', 'Submitted', 'N/A'], required: true },
     reason: { type: String, required: false },
     changedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee', required: true },
     changedAt: { type: Date, default: Date.now }

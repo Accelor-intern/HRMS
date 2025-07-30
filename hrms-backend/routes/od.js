@@ -38,9 +38,9 @@ router.post('/', auth, role(['Employee', 'HOD', 'Admin']), async (req, res) => {
     }
 
     const status = {
-      hod: req.user.role === "Employee" ? "Pending" : req.user.role === "HOD" ? "Submitted" : "Approved",
-      ceo: 'Pending',
-      admin: 'Pending'
+      hod: req.user.role === "Employee" ? "Pending" : req.user.role === "HOD" ? "Submitted" : "N/A",
+      admin: req.user.role === "Employee" || req.user.role === "HOD" ? "Pending" : "Acknowledged",
+      ceo: "N/A"
     };
 
     const od = new OD({
@@ -55,22 +55,30 @@ router.post('/', auth, role(['Employee', 'HOD', 'Admin']), async (req, res) => {
       timeIn,
       purpose,
       placeUnitVisit,
-      status
+      initialStatus: "Pending",
+      status,
+      statusHistory: [{
+        stage: 'initial',
+        status: 'Pending',
+        reason: 'OD request submitted',
+        changedBy: user._id,
+        changedAt: new Date()
+      }]
     });
 
     await od.save();
 
     if (req.user.role === 'HOD' || req.user.role === 'Admin') {
-      const ceo = await Employee.findOne({ loginType: 'CEO' });
-      if (ceo) {
-        await Notification.create({ userId: ceo.employeeId, message: `New OD request from ${user.name}` });
-        if (global._io) global._io.to(ceo.employeeId).emit('notification', { message: `New OD request from ${user.name}` });
+      const admin = await Employee.findOne({ loginType: 'Admin' });
+      if (admin) {
+        await Notification.create({ userId: admin.employeeId, message: `New OD request from ${user.name} awaiting Admin acknowledgment` });
+        if (global._io) global._io.to(admin.employeeId).emit('notification', { message: `New OD request from ${user.name} awaiting Admin acknowledgment` });
       }
     } else {
       const hod = await Employee.findOne({ department: user.department, loginType: 'HOD' });
       if (hod) {
-        await Notification.create({ userId: hod.employeeId, message: `New OD request from ${user.name}` });
-        if (global._io) global._io.to(hod.employeeId).emit('notification', { message: `New OD request from ${user.name}` });
+        await Notification.create({ userId: hod.employeeId, message: `New OD request from ${user.name} awaiting initial approval` });
+        if (global._io) global._io.to(hod.employeeId).emit('notification', { message: `New OD request from ${user.name} awaiting initial approval` });
       }
     }
 
@@ -129,8 +137,8 @@ router.get('/', auth, async (req, res) => {
 
     if (status && status !== 'all') {
       query.$or = [
+        { 'initialStatus': status },
         { 'status.hod': status },
-        { 'status.ceo': status },
         { 'status.admin': status }
       ];
     }
@@ -148,12 +156,12 @@ router.get('/', auth, async (req, res) => {
     }
 
     const total = await OD.countDocuments(query);
-   const odRecords = await OD.find(query)
-  .populate('department', 'name')
-  .sort({ createdAt: -1 })
-  .skip((page - 1) * limit)
-  .limit(parseInt(limit))
-  .select('employeeId name designation department dateOut dateIn timeOut timeIn purpose placeUnitVisit actualPunchTimes status');
+    const odRecords = await OD.find(query)
+      .populate('department', 'name')
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(parseInt(limit))
+      .select('employeeId name designation department dateOut dateIn timeOut timeIn purpose placeUnitVisit actualPunchTimes initialStatus status statusHistory');
 
     res.json({ odRecords, total });
   } catch (err) {
@@ -363,7 +371,7 @@ router.get('/', auth, async (req, res) => {
 router.put(
   "/:id/approve",
   auth,
-  role(["HOD", "CEO", "Admin"]),
+  role(["HOD", "Admin", "CEO"]),
   async (req, res) => {
     try {
       const od = await OD.findById(req.params.id).populate("employee");
@@ -378,20 +386,23 @@ router.put(
 
       const { status, reason } = req.body;
       const currentStage = req.user.role.toLowerCase();
-      const validStatuses =
-        req.user.role === "Admin" ? ["Acknowledged"] : ["Approved", "Rejected"];
+      const validStatuses = {
+        hod: ["Allowed", "Denied", "Approved", "Rejected"],
+        ceo: ["Approved", "Rejected"],
+        admin: ["Acknowledged"]
+      }[currentStage];
 
       if (!validStatuses.includes(status)) {
         return res
           .status(400)
           .json({
-            message: `Invalid status. Must be one of ${validStatuses.join(", ")}`,
+            message: `Invalid status. Must be one of ${validStatuses.join(", ")} for ${currentStage.toUpperCase()}`,
           });
       }
 
       const thirtyDaysAgo = new Date();
       thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-      if (new Date(od.dateOut) < thirtyDaysAgo && od.status[currentStage] !== "Pending") {
+      if (new Date(od.dateOut) < thirtyDaysAgo && od.initialStatus !== "Pending" && od.status[currentStage] !== "Pending") {
         return res.status(403).json({ message: "Cannot modify status after 30 days" });
       }
 
@@ -399,31 +410,53 @@ router.put(
       if (req.user.role === "HOD" && user.department.toString() !== od.department.toString()) {
         return res.status(403).json({ message: "Not authorized to modify ODs for this department" });
       }
-      if (req.user.role === "CEO" && !["Approved", "Submitted"].includes(od.status.hod)) {
-        return res.status(400).json({ message: "OD must be approved or submitted by HOD first" });
+      if (req.user.role === "CEO" && od.status.hod !== "Approved") {
+        return res.status(400).json({ message: "OD must be approved by HOD first" });
       }
       if (req.user.role === "Admin" && od.status.ceo !== "Approved") {
         return res.status(400).json({ message: "OD must be approved by CEO first" });
       }
 
-      // Update status and handle transitions
-      if (status === "Rejected") {
-        od.status.hod = currentStage === "hod" ? "Rejected" : od.status.hod;
-        od.status.ceo = currentStage === "hod" || currentStage === "ceo" ? "N/A" : od.status.ceo;
-        od.status.admin = currentStage === "hod" || currentStage === "ceo" || currentStage === "admin" ? "N/A" : od.status.admin;
-      } else {
-        od.status[currentStage] = status;
-        if (status === "Approved" && currentStage === "hod") {
-          od.status.ceo = "Pending";
+      // Update initialStatus or status
+      if (req.user.role === "HOD" && ["Allowed", "Denied"].includes(status)) {
+        od.initialStatus = status;
+        if (status === "Allowed") {
+          od.status.hod = "Pending"; // Reset to Pending for HOD approval
+          od.status.ceo = "N/A";
           od.status.admin = "Pending";
-        } else if (["Approved", "Submitted"].includes(status) && currentStage === "ceo") {
+        } else if (status === "Denied") {
+          od.status.hod = "N/A";
+          od.status.ceo = "N/A";
+          od.status.admin = "N/A";
+        }
+      } else if (req.user.role === "HOD" && ["Approved", "Rejected"].includes(status)) {
+        if (od.initialStatus !== "Allowed") {
+          return res.status(400).json({ message: "OD must be allowed before approving or rejecting" });
+        }
+        od.status.hod = status;
+        if (status === "Rejected") {
+          od.status.ceo = "N/A";
+          od.status.admin = "N/A";
+        } else if (status === "Approved") {
+          od.status.ceo = "Pending";
+        }
+      } else if (req.user.role === "CEO" && ["Approved", "Rejected"].includes(status)) {
+        if (od.status.hod !== "Approved") {
+          return res.status(400).json({ message: "OD must be approved by HOD before CEO action" });
+        }
+        od.status.ceo = status;
+        if (status === "Rejected") {
+          od.status.admin = "N/A";
+        } else if (status === "Approved") {
           od.status.admin = "Pending";
         }
+      } else if (req.user.role === "Admin") {
+        od.status.admin = status;
       }
 
       // Add to status history
       od.statusHistory.push({
-        stage: currentStage,
+        stage: currentStage === "hod" && ["Allowed", "Denied"].includes(status) ? "initial" : currentStage,
         status,
         reason: reason || "No reason provided",
         changedBy: user._id,
@@ -453,21 +486,8 @@ router.put(
         }
       }
 
-      // Notify next approver or admin
-      if (status === "Approved" && currentStage === "hod") {
-        const ceo = await Employee.findOne({ loginType: "CEO" });
-        if (ceo) {
-          await Notification.create({
-            userId: ceo.employeeId,
-            message: `OD request from ${od.name} awaiting CEO approval`
-          });
-          if (global._io) {
-            global._io.to(ceo.employeeId).emit('notification', {
-              message: `OD request from ${od.name} awaiting CEO approval`
-            });
-          }
-        }
-      } else if (["Approved", "Submitted"].includes(status) && currentStage === "ceo") {
+      // Notify admin for HOD actions
+      if (req.user.role === "HOD" && status === "Allowed") {
         const admin = await Employee.findOne({ loginType: "Admin" });
         if (admin) {
           await Notification.create({
@@ -482,9 +502,25 @@ router.put(
         }
       }
 
+      // Notify CEO for HOD approval
+      if (req.user.role === "HOD" && status === "Approved") {
+        const ceo = await Employee.findOne({ loginType: "CEO" });
+        if (ceo) {
+          await Notification.create({
+            userId: ceo.employeeId,
+            message: `OD request from ${od.name} awaiting CEO approval`
+          });
+          if (global._io) {
+            global._io.to(ceo.employeeId).emit('notification', {
+              message: `OD request from ${od.name} awaiting CEO approval`
+            });
+          }
+        }
+      }
+
       // Notify admin of status change
       const admin = await Employee.findOne({ loginType: "Admin" });
-      if (admin) {
+      if (admin && req.user.role !== "Admin") {
         await Notification.create({
           userId: admin.employeeId,
           message: `OD request status for ${od.name} changed to ${status} by ${currentStage.toUpperCase()}. Reason: ${reason || "No reason provided"}`
@@ -505,3 +541,5 @@ router.put(
 );
 
 export default router;
+
+
