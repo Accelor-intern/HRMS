@@ -14,13 +14,14 @@ const odSchema = new mongoose.Schema({
   placeUnitVisit: { type: String, required: true },
   initialStatus: { type: String, enum: ['Pending', 'Allowed', 'Denied'], default: 'Pending' },
   status: {
-    hod: { type: String, enum: ['Pending', 'Approved', 'Rejected', 'Submitted', 'N/A'], default: 'Pending' },
-    admin: { type: String, enum: ['Pending', 'Acknowledged', 'N/A'], default: 'Pending' },
+    admin: { type: String, enum: ['Pending', 'Allowed', 'Denied', 'N/A'], default: 'Pending' },
+    hod: { type: String, enum: ['Pending', 'Approved', 'Rejected', 'N/A'], default: 'Pending' },
     ceo: { type: String, enum: ['Pending', 'Approved', 'Rejected', 'N/A'], default: 'N/A' },
+    finalAdmin: { type: String, enum: ['Pending', 'Acknowledged', 'N/A'], default: 'N/A' }
   },
   statusHistory: [{
-    stage: { type: String, enum: ['initial', 'hod', 'admin', 'ceo'], required: true },
-    status: { type: String, enum: ['Pending', 'Allowed', 'Denied', 'Approved', 'Rejected', 'Acknowledged', 'Submitted', 'N/A'], required: true },
+    stage: { type: String, enum: ['initial', 'admin', 'hod', 'ceo', 'finalAdmin'], required: true },
+    status: { type: String, enum: ['Pending', 'Allowed', 'Denied', 'Approved', 'Rejected', 'Acknowledged', 'N/A'], required: true },
     reason: { type: String, required: false },
     changedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee', required: true },
     changedAt: { type: Date, default: Date.now }

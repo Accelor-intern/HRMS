@@ -368,6 +368,180 @@ router.get('/', auth, async (req, res) => {
 //   }
 // );
 
+
+//final router function
+// router.put(
+//   "/:id/approve",
+//   auth,
+//   role(["HOD", "Admin", "CEO"]),
+//   async (req, res) => {
+//     try {
+//       const od = await OD.findById(req.params.id).populate("employee");
+//       if (!od) {
+//         return res.status(404).json({ message: "OD request not found" });
+//       }
+
+//       const user = await Employee.findById(req.user.id);
+//       if (!user) {
+//         return res.status(404).json({ message: "User not found" });
+//       }
+
+//       const { status, reason } = req.body;
+//       const currentStage = req.user.role.toLowerCase();
+//       const validStatuses = {
+//         hod: ["Allowed", "Denied", "Approved", "Rejected"],
+//         ceo: ["Approved", "Rejected"],
+//         admin: ["Acknowledged"]
+//       }[currentStage];
+
+//       if (!validStatuses.includes(status)) {
+//         return res
+//           .status(400)
+//           .json({
+//             message: `Invalid status. Must be one of ${validStatuses.join(", ")} for ${currentStage.toUpperCase()}`,
+//           });
+//       }
+
+//       const thirtyDaysAgo = new Date();
+//       thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+//       if (new Date(od.dateOut) < thirtyDaysAgo && od.initialStatus !== "Pending" && od.status[currentStage] !== "Pending") {
+//         return res.status(403).json({ message: "Cannot modify status after 30 days" });
+//       }
+
+//       // Authorization checks
+//       if (req.user.role === "HOD" && user.department.toString() !== od.department.toString()) {
+//         return res.status(403).json({ message: "Not authorized to modify ODs for this department" });
+//       }
+//       if (req.user.role === "CEO" && od.status.hod !== "Approved") {
+//         return res.status(400).json({ message: "OD must be approved by HOD first" });
+//       }
+//       if (req.user.role === "Admin" && od.status.ceo !== "Approved") {
+//         return res.status(400).json({ message: "OD must be approved by CEO first" });
+//       }
+
+//       // Update initialStatus or status
+//       if (req.user.role === "HOD" && ["Allowed", "Denied"].includes(status)) {
+//         od.initialStatus = status;
+//         if (status === "Allowed") {
+//           od.status.hod = "Pending"; // Reset to Pending for HOD approval
+//           od.status.ceo = "N/A";
+//           od.status.admin = "Pending";
+//         } else if (status === "Denied") {
+//           od.status.hod = "N/A";
+//           od.status.ceo = "N/A";
+//           od.status.admin = "N/A";
+//         }
+//       } else if (req.user.role === "HOD" && ["Approved", "Rejected"].includes(status)) {
+//         if (od.initialStatus !== "Allowed") {
+//           return res.status(400).json({ message: "OD must be allowed before approving or rejecting" });
+//         }
+//         od.status.hod = status;
+//         if (status === "Rejected") {
+//           od.status.ceo = "N/A";
+//           od.status.admin = "N/A";
+//         } else if (status === "Approved") {
+//           od.status.ceo = "Pending";
+//         }
+//       } else if (req.user.role === "CEO" && ["Approved", "Rejected"].includes(status)) {
+//         if (od.status.hod !== "Approved") {
+//           return res.status(400).json({ message: "OD must be approved by HOD before CEO action" });
+//         }
+//         od.status.ceo = status;
+//         if (status === "Rejected") {
+//           od.status.admin = "N/A";
+//         } else if (status === "Approved") {
+//           od.status.admin = "Pending";
+//         }
+//       } else if (req.user.role === "Admin") {
+//         od.status.admin = status;
+//       }
+
+//       // Add to status history
+//       od.statusHistory.push({
+//         stage: currentStage === "hod" && ["Allowed", "Denied"].includes(status) ? "initial" : currentStage,
+//         status,
+//         reason: reason || "No reason provided",
+//         changedBy: user._id,
+//         changedAt: new Date()
+//       });
+
+//       await od.save();
+
+//       // Create audit log
+//       await Audit.create({
+//         user: user.employeeId,
+//         action: `${status} OD`,
+//         details: `${status} OD request for ${od.name} with reason: ${reason || "No reason provided"}`
+//       });
+
+//       // Notify employee
+//       const employee = await Employee.findById(od.employee);
+//       if (employee) {
+//         await Notification.create({
+//           userId: employee.employeeId,
+//           message: `Your OD request has been ${status.toLowerCase()} by ${currentStage.toUpperCase()}. Reason: ${reason || "No reason provided"}`
+//         });
+//         if (global._io) {
+//           global._io.to(employee.employeeId).emit('notification', {
+//             message: `Your OD request has been ${status.toLowerCase()} by ${currentStage.toUpperCase()}. Reason: ${reason || "No reason provided"}`
+//           });
+//         }
+//       }
+
+//       // Notify admin for HOD actions
+//       if (req.user.role === "HOD" && status === "Allowed") {
+//         const admin = await Employee.findOne({ loginType: "Admin" });
+//         if (admin) {
+//           await Notification.create({
+//             userId: admin.employeeId,
+//             message: `OD request from ${od.name} awaiting Admin acknowledgment`
+//           });
+//           if (global._io) {
+//             global._io.to(admin.employeeId).emit('notification', {
+//               message: `OD request from ${od.name} awaiting Admin acknowledgment`
+//             });
+//           }
+//         }
+//       }
+
+//       // Notify CEO for HOD approval
+//       if (req.user.role === "HOD" && status === "Approved") {
+//         const ceo = await Employee.findOne({ loginType: "CEO" });
+//         if (ceo) {
+//           await Notification.create({
+//             userId: ceo.employeeId,
+//             message: `OD request from ${od.name} awaiting CEO approval`
+//           });
+//           if (global._io) {
+//             global._io.to(ceo.employeeId).emit('notification', {
+//               message: `OD request from ${od.name} awaiting CEO approval`
+//             });
+//           }
+//         }
+//       }
+
+//       // Notify admin of status change
+//       const admin = await Employee.findOne({ loginType: "Admin" });
+//       if (admin && req.user.role !== "Admin") {
+//         await Notification.create({
+//           userId: admin.employeeId,
+//           message: `OD request status for ${od.name} changed to ${status} by ${currentStage.toUpperCase()}. Reason: ${reason || "No reason provided"}`
+//         });
+//         if (global._io) {
+//           global._io.to(admin.employeeId).emit('notification', {
+//             message: `OD request status for ${od.name} changed to ${status} by ${currentStage.toUpperCase()}. Reason: ${reason || "No reason provided"}`
+//           });
+//         }
+//       }
+
+//       res.json(od);
+//     } catch (err) {
+//       console.error("OD approval error:", err.stack);
+//       res.status(500).json({ message: "Server error", error: err.message });
+//     }
+//   }
+// );
+
 router.put(
   "/:id/approve",
   auth,
@@ -385,11 +559,21 @@ router.put(
       }
 
       const { status, reason } = req.body;
-      const currentStage = req.user.role.toLowerCase();
+     let currentStage = req.user.role.toLowerCase();
+
+if (req.user.role === "Admin") {
+  if (od.status.admin === "Pending" && od.initialStatus === "Allowed") {
+    currentStage = "admin";
+  } else if (od.status.finalAdmin === "Pending" && od.status.ceo === "Approved") {
+    currentStage = "finalAdmin";
+  }
+}
+
       const validStatuses = {
         hod: ["Allowed", "Denied", "Approved", "Rejected"],
         ceo: ["Approved", "Rejected"],
-        admin: ["Acknowledged"]
+        admin: ["Allowed", "Denied"],
+        finalAdmin: ["Acknowledged"]
       }[currentStage];
 
       if (!validStatuses.includes(status)) {
@@ -410,55 +594,69 @@ router.put(
       if (req.user.role === "HOD" && user.department.toString() !== od.department.toString()) {
         return res.status(403).json({ message: "Not authorized to modify ODs for this department" });
       }
-      if (req.user.role === "CEO" && od.status.hod !== "Approved") {
-        return res.status(400).json({ message: "OD must be approved by HOD first" });
+      if (req.user.role === "Admin" && currentStage === "admin" && od.initialStatus !== "Allowed") {
+        return res.status(400).json({ message: "OD must be allowed by HOD first" });
       }
-      if (req.user.role === "Admin" && od.status.ceo !== "Approved") {
-        return res.status(400).json({ message: "OD must be approved by CEO first" });
+      if (req.user.role === "HOD" && ["Approved", "Rejected"].includes(status) && od.status.admin !== "Allowed") {
+        return res.status(400).json({ message: "OD must be allowed by Admin before HOD approval" });
+      }
+      if (req.user.role === "CEO" && od.status.hod !== "Approved") {
+        return res.status(400).json({ message: "OD must be approved by HOD before CEO action" });
+      }
+      if (req.user.role === "Admin" && currentStage === "finalAdmin" && od.status.ceo !== "Approved") {
+        return res.status(400).json({ message: "OD must be approved by CEO before final Admin acknowledgment" });
       }
 
       // Update initialStatus or status
       if (req.user.role === "HOD" && ["Allowed", "Denied"].includes(status)) {
-        od.initialStatus = status;
+        od.initialStatus = status; // This remains the initial HOD decision
         if (status === "Allowed") {
-          od.status.hod = "Pending"; // Reset to Pending for HOD approval
-          od.status.ceo = "N/A";
           od.status.admin = "Pending";
+          od.status.hod = "Pending"; // HOD's next action
+          od.status.ceo = "N/A";
+          od.status.finalAdmin = "N/A";
+        } else if (status === "Denied") {
+          od.status.admin = "N/A";
+          od.status.hod = "N/A";
+          od.status.ceo = "N/A";
+          od.status.finalAdmin = "N/A";
+        }
+      } else if (req.user.role === "Admin" && ["Allowed", "Denied"].includes(status)) {
+        od.status.admin = status;
+        if (status === "Allowed") {
+          od.status.hod = "Pending";
+          od.status.ceo = "N/A";
+          od.status.finalAdmin = "N/A";
         } else if (status === "Denied") {
           od.status.hod = "N/A";
           od.status.ceo = "N/A";
-          od.status.admin = "N/A";
+          od.status.finalAdmin = "N/A";
         }
       } else if (req.user.role === "HOD" && ["Approved", "Rejected"].includes(status)) {
-        if (od.initialStatus !== "Allowed") {
-          return res.status(400).json({ message: "OD must be allowed before approving or rejecting" });
-        }
         od.status.hod = status;
-        if (status === "Rejected") {
-          od.status.ceo = "N/A";
-          od.status.admin = "N/A";
-        } else if (status === "Approved") {
+        if (status === "Approved") {
           od.status.ceo = "Pending";
+          od.status.finalAdmin = "N/A";
+        } else if (status === "Rejected") {
+          od.status.ceo = "N/A";
+          od.status.finalAdmin = "N/A";
         }
       } else if (req.user.role === "CEO" && ["Approved", "Rejected"].includes(status)) {
-        if (od.status.hod !== "Approved") {
-          return res.status(400).json({ message: "OD must be approved by HOD before CEO action" });
-        }
         od.status.ceo = status;
-        if (status === "Rejected") {
-          od.status.admin = "N/A";
-        } else if (status === "Approved") {
-          od.status.admin = "Pending";
+        if (status === "Approved") {
+          od.status.finalAdmin = "Pending";
+        } else if (status === "Rejected") {
+          od.status.finalAdmin = "N/A";
         }
-      } else if (req.user.role === "Admin") {
-        od.status.admin = status;
+      } else if (req.user.role === "Admin" && status === "Acknowledged") {
+        od.status.finalAdmin = status;
       }
 
-      // Add to status history
+      // Add to status history with correct stage
       od.statusHistory.push({
-        stage: currentStage === "hod" && ["Allowed", "Denied"].includes(status) ? "initial" : currentStage,
+        stage: req.user.role.toLowerCase() === "hod" && ["Allowed", "Denied"].includes(status) ? "hod" : currentStage,
         status,
-        reason: reason || "No reason provided",
+        reason: reason || undefined, // Only store reason if provided
         changedBy: user._id,
         changedAt: new Date()
       });
@@ -486,17 +684,33 @@ router.put(
         }
       }
 
-      // Notify admin for HOD actions
+      // Notify admin for HOD initial allow
       if (req.user.role === "HOD" && status === "Allowed") {
         const admin = await Employee.findOne({ loginType: "Admin" });
         if (admin) {
           await Notification.create({
             userId: admin.employeeId,
-            message: `OD request from ${od.name} awaiting Admin acknowledgment`
+            message: `OD request from ${od.name} awaiting Admin permission`
           });
           if (global._io) {
             global._io.to(admin.employeeId).emit('notification', {
-              message: `OD request from ${od.name} awaiting Admin acknowledgment`
+              message: `OD request from ${od.name} awaiting Admin permission`
+            });
+          }
+        }
+      }
+
+      // Notify HOD for Admin allow
+      if (req.user.role === "Admin" && status === "Allowed") {
+        const hod = await Employee.findOne({ loginType: "HOD", department: od.department });
+        if (hod) {
+          await Notification.create({
+            userId: hod.employeeId,
+            message: `OD request from ${od.name} awaiting HOD approval`
+          });
+          if (global._io) {
+            global._io.to(hod.employeeId).emit('notification', {
+              message: `OD request from ${od.name} awaiting HOD approval`
             });
           }
         }
@@ -518,7 +732,23 @@ router.put(
         }
       }
 
-      // Notify admin of status change
+      // Notify admin for CEO approval
+      if (req.user.role === "CEO" && status === "Approved") {
+        const admin = await Employee.findOne({ loginType: "Admin" });
+        if (admin) {
+          await Notification.create({
+            userId: admin.employeeId,
+            message: `OD request from ${od.name} awaiting final Admin acknowledgment`
+          });
+          if (global._io) {
+            global._io.to(admin.employeeId).emit('notification', {
+              message: `OD request from ${od.name} awaiting final Admin acknowledgment`
+            });
+          }
+        }
+      }
+
+      // Notify admin of status change (except for Admin's own actions)
       const admin = await Employee.findOne({ loginType: "Admin" });
       if (admin && req.user.role !== "Admin") {
         await Notification.create({

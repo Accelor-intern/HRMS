@@ -14,22 +14,28 @@ import '../App.css';
 function ODForm() {
   const { user } = useContext(AuthContext);
 
-  const getCurrentDate = () => new Date().toISOString().split("T")[0];
+ const getCurrentDate = () => new Date().toISOString().split("T")[0];
+const getCurrentTime = () => {
+  const now = new Date();
+  return `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+};
 
-  const [form, setForm] = useState({
-    dateOut: getCurrentDate(),
-    timeOut: '09:00', // Default for Single Day OD
-    dateIn: getCurrentDate(),
-    timeIn: '17:30', // Default for Single Day OD
-    numberOfDays: '',
-    purpose: '',
-    placeUnitVisit: '',
-    estimatedTime: '',
-  });
+const [form, setForm] = useState({
+  dateOut: getCurrentDate(),
+  timeOut: getCurrentTime(),
+  dateIn: getCurrentDate(),
+  timeIn: '17:30',
+  numberOfDays: '',
+  purpose: '',
+  placeUnitVisit: '',
+  estimatedTime: '',
+});
 
+  const [numberOfDaysError, setNumberOfDaysError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [quote, setQuote] = useState('');
   const [tripType, setTripType] = useState(null); // Changed from isSingleDay to tripType for clarity
+  const [formOpenTime, setFormOpenTime] = useState(getCurrentTime());
 
   const quotes = [
     { text: "Success is where preparation and opportunity meet.", author: "Bobby Unser" },
@@ -59,74 +65,84 @@ function ODForm() {
     setQuote(`${randomQuote.text} — ${randomQuote.author}`);
   }, []);
 
-  const handleChange = (e) => {
-    const { name, value } = e.target;
-    let updatedForm = { ...form, [name]: value };
+const handleChange = (e) => {
+  const { name, value } = e.target;
+  let updatedForm = { ...form, [name]: value };
 
-    // For Multiple Days OD: Calculate Date In based on Number of Days
-    if (tripType === 'multiple' && name === 'numberOfDays' && value) {
-      const days = parseInt(value);
-      if (!isNaN(days) && days > 0 && updatedForm.dateOut) {
-        const dateOut = new Date(updatedForm.dateOut);
-        dateOut.setDate(dateOut.getDate() + days - 1);
-        updatedForm.dateIn = dateOut.toISOString().split("T")[0];
-      } else {
-        updatedForm.dateIn = updatedForm.dateOut;
-      }
+  // For Multiple Days OD: Calculate Date In based on Number of Days
+  if (tripType === 'multiple' && name === 'numberOfDays' && value) {
+    const days = parseInt(value);
+    if (!isNaN(days) && days > 1 && updatedForm.dateOut) {
+      const dateOut = new Date(updatedForm.dateOut);
+      dateOut.setDate(dateOut.getDate() + days - 1);
+      updatedForm.dateIn = dateOut.toISOString().split("T")[0];
+      setNumberOfDaysError('');
+    } else {
+      updatedForm.dateIn = '';
+      setNumberOfDaysError('Number of Days must be greater than 1');
     }
+  }
 
-    // For Single Day OD and Hour-Based OD: Set Date In same as Date Out
-    if ((tripType === 'single' || tripType === 'hour') && name === 'dateOut') {
-      updatedForm.dateIn = value;
+  // For Single Day OD and Hour-Based OD: Set Date In same as Date Out
+  if ((tripType === 'single' || tripType === 'hour') && name === 'dateOut') {
+    updatedForm.dateIn = value;
+  }
+
+  // For Hour-Based OD: Calculate Time In based on Estimated Time
+  if (tripType === 'hour' && (name === 'estimatedTime' || name === 'timeOut') && updatedForm.estimatedTime && updatedForm.timeOut) {
+    const [hours, minutes] = updatedForm.timeOut.split(':').map(Number);
+    const estimatedHours = parseFloat(updatedForm.estimatedTime);
+    if (!isNaN(estimatedHours)) {
+      const totalMinutes = hours * 60 + minutes + estimatedHours * 60;
+      const newHours = Math.floor(totalMinutes / 60) % 24;
+      const newMinutes = totalMinutes % 60;
+      updatedForm.timeIn = `${newHours.toString().padStart(2, '0')}:${newMinutes.toString().padStart(2, '0')}`;
+    } else {
+      updatedForm.timeIn = '';
     }
+  }
 
-    // For Hour-Based OD: Calculate Time In based on Estimated Time
-    if (tripType === 'hour' && (name === 'estimatedTime' || name === 'timeOut') && updatedForm.estimatedTime && updatedForm.timeOut) {
-      const [hours, minutes] = updatedForm.timeOut.split(':').map(Number);
-      const estimatedHours = parseFloat(updatedForm.estimatedTime);
-      if (!isNaN(estimatedHours)) {
-        const totalMinutes = hours * 60 + minutes + estimatedHours * 60;
-        const newHours = Math.floor(totalMinutes / 60) % 24;
-        const newMinutes = totalMinutes % 60;
-        updatedForm.timeIn = `${newHours.toString().padStart(2, '0')}:${newMinutes.toString().padStart(2, '0')}`;
-      } else {
-        updatedForm.timeIn = '';
-      }
-    }
+  setForm(updatedForm);
+};
 
-    setForm(updatedForm);
+ const handleTripTypeChange = (type) => {
+  setTripType(type);
+  const newFormOpenTime = getCurrentTime();
+  setFormOpenTime(newFormOpenTime);
+  const baseForm = {
+    dateOut: getCurrentDate(),
+    timeOut: type === 'single' || type === 'hour' ? newFormOpenTime : '09:00',
+    dateIn: type === 'multiple' ? '' : getCurrentDate(),
+    timeIn: type === 'single' ? '17:30' : '',
+    numberOfDays: '',
+    purpose: '',
+    placeUnitVisit: '',
+    estimatedTime: '',
   };
+  setForm(baseForm);
+  setNumberOfDaysError('');
+};
+const validateForm = () => {
+  if (tripType === null) return 'Please select trip type';
+  if (!form.dateOut) return 'Date Out is required';
+  if (new Date(form.dateOut) < new Date(getCurrentDate())) {
+    return 'Date Out cannot be in the past';
+  }
+  if (!form.timeOut) return 'Time Out is required';
+  if (tripType === 'multiple' && (!form.numberOfDays || parseInt(form.numberOfDays) <= 1)) {
+    return 'Number of Days must be greater than 1 for multiple days OD';
+  }
+  if (tripType === 'multiple' && form.dateOut && form.dateIn && new Date(form.dateOut) > new Date(form.dateIn)) {
+    return 'Date Out must be before or equal to Date In';
+  }
+  if (tripType === 'hour' && !form.estimatedTime) {
+    return 'Estimated Time is required for hour-based trips';
+  }
+  if (!form.purpose) return 'Purpose is required';
+  if (!form.placeUnitVisit) return 'Place/Unit Visit is required';
+  return null;
+};
 
-  const handleTripTypeChange = (type) => {
-    setTripType(type);
-    const baseForm = {
-      dateOut: getCurrentDate(),
-      timeOut: type === 'single' ? '09:00' : getCurrentDate(),
-      dateIn: getCurrentDate(),
-      timeIn: type === 'single' ? '17:30' : '',
-      numberOfDays: '',
-      purpose: '',
-      placeUnitVisit: '',
-      estimatedTime: '',
-    };
-    setForm(baseForm);
-  };
-
-  const validateForm = () => {
-    if (tripType === null) return 'Please select trip type';
-    if (!form.dateOut) return 'Date Out is required';
-    if (!form.timeOut) return 'Time Out is required';
-    if (tripType === 'multiple' && !form.numberOfDays) return 'Number of Days is required';
-    if (tripType === 'multiple' && form.dateOut && form.dateIn && new Date(form.dateOut) > new Date(form.dateIn)) {
-      return 'Date Out must be before or equal to Date In';
-    }
-    if (tripType === 'hour' && !form.estimatedTime) {
-      return 'Estimated Time is required for hour-based trips';
-    }
-    if (!form.purpose) return 'Purpose is required';
-    if (!form.placeUnitVisit) return 'Place/Unit Visit is required';
-    return null;
-  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -305,22 +321,25 @@ function ODForm() {
                           className="w-full"
                         />
                       </div>
-                      {tripType === 'multiple' && (
-                        <div>
-                          <Label htmlFor="numberOfDays" className="text-blue-800">Number of Days</Label>
-                          <Input
-                            id="numberOfDays"
-                            name="numberOfDays"
-                            type="number"
-                            min="1"
-                            value={form.numberOfDays}
-                            onChange={handleChange}
-                            placeholder="e.g., 2"
-                            required
-                            className="w-full"
-                          />
-                        </div>
-                      )}
+                   {tripType === 'multiple' && (
+  <div>
+    <Label htmlFor="numberOfDays" className="text-blue-800">Number of Days</Label>
+    <Input
+      id="numberOfDays"
+      name="numberOfDays"
+      type="number"
+      min="2"
+      value={form.numberOfDays}
+      onChange={handleChange}
+      placeholder="e.g., 2"
+      required
+      className="w-full"
+    />
+    {numberOfDaysError && (
+      <p className="text-red-600 text-sm mt-1">{numberOfDaysError}</p>
+    )}
+  </div>
+)}
                       {tripType === 'multiple' && (
                         <div>
                           <Label htmlFor="dateIn" className="text-blue-800">Date In</Label>
@@ -336,18 +355,19 @@ function ODForm() {
                           />
                         </div>
                       )}
-                      <div>
-                        <Label htmlFor="timeOut" className="text-blue-800">Time Out</Label>
-                        <Input
-                          id="timeOut"
-                          name="timeOut"
-                          type="time"
-                          value={form.timeOut}
-                          onChange={handleChange}
-                          required
-                          className="w-full"
-                        />
-                      </div>
+   <div>
+  <Label htmlFor="timeOut" className="text-blue-800">Time Out</Label>
+  <Input
+    id="timeOut"
+    name="timeOut"
+    type="time"
+    value={form.timeOut}
+    onChange={handleChange}
+    min={form.dateOut === getCurrentDate() && (tripType === 'single' || tripType === 'hour') ? formOpenTime : undefined}
+    required
+    className="w-full"
+  />
+</div>
                       {tripType === 'hour' && (
                         <div>
                           <Label htmlFor="estimatedTime" className="text-blue-800">Estimated Time (Hours)</Label>
@@ -365,7 +385,7 @@ function ODForm() {
                           />
                         </div>
                       )}
-                      {(tripType === 'hour' || tripType === 'single') && (
+                      {(tripType === 'hour' || tripType === 'single' ) && (
                         <div>
                           <Label htmlFor="timeIn" className="text-blue-800">Time In</Label>
                           <Input
@@ -382,20 +402,7 @@ function ODForm() {
                     </div>
                     {/* Purpose and Place Section */}
                     <div className="space-y-4">
-                      <div>
-                        <Label htmlFor="purpose" className="text-blue-800">Purpose</Label>
-                        <Textarea
-                          id="purpose"
-                          name="purpose"
-                          value={form.purpose}
-                          onChange={handleChange}
-                          rows={4}
-                          placeholder="Enter purpose..."
-                          required
-                          className="w-full"
-                        />
-                      </div>
-                      <div>
+                       <div>
                         <Label htmlFor="placeUnitVisit" className="text-blue-800">Place/Unit Visit</Label>
                         <Input
                           id="placeUnitVisit"
@@ -404,6 +411,19 @@ function ODForm() {
                           value={form.placeUnitVisit}
                           onChange={handleChange}
                           placeholder="Enter place/unit visit"
+                          required
+                          className="w-full"
+                        />
+                      </div>
+                       <div>
+                        <Label htmlFor="purpose" className="text-blue-800">Purpose</Label>
+                        <Textarea
+                          id="purpose"
+                          name="purpose"
+                          value={form.purpose}
+                          onChange={handleChange}
+                          rows={4}
+                          placeholder="Enter purpose..."
                           required
                           className="w-full"
                         />
