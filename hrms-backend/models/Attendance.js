@@ -100,4 +100,4 @@ const attendanceSchema = new mongoose.Schema({
 // Add unique index to prevent duplicate attendance records for the same employee and date
 attendanceSchema.index({ employeeId: 1, logDate: 1 }, { unique: true });
 
-export default mongoose.model('Attendance', attendanceSchema);
+export default mongoose.models.Attendance || mongoose.model('Attendance', attendanceSchema);

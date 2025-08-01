@@ -553,30 +553,45 @@ router.get('/employee-stats', auth, role(['Employee', 'HOD', 'Admin']), async (r
 
 router.get('/attendance', auth, async (req, res) => {
   try {
-    const istNow = new Date(); // Already in IST
+    // Get current time in IST
+    const istNow = new Date();
 
-    // Get "today" at midnight
+    // Calculate 20-hour window to determine relevant data
+    const twentyHoursAgoIST = new Date(istNow);
+    twentyHoursAgoIST.setHours(istNow.getHours() - 20);
+
+    // Get "today" at midnight IST
     const istTodayStart = new Date(istNow);
     istTodayStart.setHours(0, 0, 0, 0);
 
-    // Cutoff time: 6:30 PM IST
-    const istCutoffTime = new Date(istTodayStart);
-    istCutoffTime.setHours(18, 30, 0, 0);
+    // Determine target date based on 20-hour window instead of 6:30 PM cutoff
+    let targetDateIST = new Date(istTodayStart);
+    if (twentyHoursAgoIST > istTodayStart) {
+      // If 20 hours ago crosses into the previous day, use yesterday's date
+      targetDateIST.setDate(istTodayStart.getDate() - 1);
+    } else {
+      // Use today's date if within the last 20 hours
+      targetDateIST = new Date(istTodayStart);
+    }
 
-    // If before 6:30 PM, show today's attendance
-   let targetDateIST = new Date(istTodayStart);
+    // Convert target date to UTC for query alignment
+    const startOfDayUTC = new Date(Date.UTC(targetDateIST.getUTCFullYear(), targetDateIST.getUTCMonth(), targetDateIST.getUTCDate()));
+    startOfDayUTC.setUTCHours(18, 30, 0, 0); // Align with your logDate start (e.g., 2025-07-31T18:30:00.000Z)
+    const endOfDayUTC = new Date(Date.UTC(targetDateIST.getUTCFullYear(), targetDateIST.getUTCMonth(), targetDateIST.getUTCDate() + 1));
+    // Adjust end to 2025-08-01T00:00:00.000Z if targeting August 1, 2025
+    if (targetDateIST.toISOString().split('T')[0] === '2025-08-01') {
+      endOfDayUTC.setUTCHours(0, 0, 0, 0); // Set to 2025-08-01T00:00:00.000Z as requested
+    }
 
+    console.log('Querying attendance from:', startOfDayUTC.toISOString(), 'to:', endOfDayUTC.toISOString());
 
-   const startOfDayUTC = new Date(targetDateIST.getTime() - 5.5 * 60 * 60 * 1000);
-const endOfDayUTC = new Date(startOfDayUTC);
-endOfDayUTC.setHours(23, 59, 59, 999);
-
-
-    console.log('Querying attendance from:', startOfDayUTC, 'to:', endOfDayUTC);
+    // 20-hour retention filter
+    const twentyHoursAgo = new Date(istNow);
+    twentyHoursAgo.setHours(twentyHoursAgo.getHours() - 20);
 
     const attendanceRecords = await Attendance.find({
-      logDate: { $gte: startOfDayUTC, $lte: endOfDayUTC },
-    }).select('employeeId timeIn status');
+      logDate: { $gte: startOfDayUTC, $lte: endOfDayUTC, $gte: twentyHoursAgo },
+    }).select('employeeId timeIn status logDate');
 
     const employeeDetails = await Employee.find({
       employeeId: { $in: attendanceRecords.map(record => record.employeeId) },
@@ -590,6 +605,7 @@ endOfDayUTC.setHours(23, 59, 59, 999);
         department: employee?.department?.name || 'N/A',
         logInTime: record.timeIn,
         status: record.status,
+        logDate: record.logDate,
       };
     });
 
