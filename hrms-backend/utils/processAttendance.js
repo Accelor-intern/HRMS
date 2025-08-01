@@ -256,20 +256,26 @@ import Employee from '../models/Employee.js';
 
 async function processPunchLogAttendance() {
   try {
-    console.log(`Running processPunchLogAttendance at ${new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' })}...`);
+    const now = new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' });
+    console.log(`Running processPunchLogAttendance at ${now}...`);
 
-    // Current date in IST (UTC+5:30) for processing current day's records
-    const today = new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' });
-    const todayDate = new Date(today);
+    // Set date to start of day in IST (UTC+5:30)
+    const todayDate = new Date(now);
     todayDate.setHours(0, 0, 0, 0);
+    const startOfDay = new Date(todayDate);
+    const endOfDay = new Date(todayDate);
+    endOfDay.setHours(23, 59, 59, 999);
 
     // Fetch all employees
     const employees = await Employee.find();
     console.log(`Fetched ${employees.length} employees`);
 
     // Fetch unprocessed punch logs for today
-    const todayPunches = await RawPunchlog.find({ LogDate: todayDate, processed: false });
-    console.log(`Fetched ${todayPunches.length} unprocessed punch logs for ${todayDate}`);
+    const todayPunches = await RawPunchlog.find({
+      LogDate: { $gte: startOfDay, $lte: endOfDay },
+      processed: false
+    });
+    console.log(`Fetched ${todayPunches.length} unprocessed punch logs for ${todayDate.toISOString().split('T')[0]}`);
 
     // Group punches by UserID
     const logsByUser = {};
@@ -285,13 +291,14 @@ async function processPunchLogAttendance() {
       const logs = logsByUser[userId] || [];
       console.log(`Processing employee ${userId} with ${logs.length} logs`);
 
+      // Find or create attendance record
       let attendance = await Attendance.findOne({
         employeeId: employee.employeeId,
-        logDate: todayDate,
+        logDate: todayDate
       });
 
       if (logs.length === 0) {
-        // No records, mark as Absent
+        // No punch records, mark as Absent
         if (!attendance) {
           await Attendance.create({
             employeeId: employee.employeeId,
@@ -302,7 +309,7 @@ async function processPunchLogAttendance() {
             timeOut: null,
             status: 'AWI',
             halfDay: null,
-            ot: 0,
+            ot: 0
           });
           console.log(`Created Absent record for employee ${employee.employeeId}`);
         } else if (attendance.status !== 'AWI') {
@@ -315,11 +322,12 @@ async function processPunchLogAttendance() {
         continue;
       }
 
-      // Sort punches by time
-      logs.sort((a, b) => new Date(`1970-01-01T${a.LogTime}Z`) - new Date(`1970-01-01T${b.LogTime}Z`));
+      // Sort punches by LogDate to ensure earliest punch is selected
+      logs.sort((a, b) => new Date(a.LogDate) - new Date(b.LogDate));
 
-      const firstInPunch = logs.find(log => log.Direction === "in");
-      const lastOutPunch = [...logs].reverse().find(log => log.Direction === "out");
+      // Select first "in" and last "out" punch
+      const firstInPunch = logs.find(log => log.Direction === 'in');
+      const lastOutPunch = [...logs].reverse().find(log => log.Direction === 'out');
 
       let timeIn = firstInPunch ? firstInPunch.LogTime : '00:00:00';
       let timeOut = lastOutPunch ? lastOutPunch.LogTime : null;
@@ -327,15 +335,15 @@ async function processPunchLogAttendance() {
 
       // Validate time formats
       if (!/^\d{2}:\d{2}:\d{2}$/.test(timeIn)) {
-        console.warn(`⚠️ Invalid timeIn format for employee ${employee.employeeId} on ${todayDate}: ${timeIn}. Defaulting to '00:00:00'.`);
+        console.warn(`⚠️ Invalid timeIn format for employee ${employee.employeeId} on ${todayDate.toISOString().split('T')[0]}: ${timeIn}. Defaulting to '00:00:00'.`);
         timeIn = '00:00:00';
       }
       if (timeOut && !/^\d{2}:\d{2}:\d{2}$/.test(timeOut)) {
-        console.warn(`⚠️ Invalid timeOut format for employee ${employee.employeeId} on ${todayDate}: ${timeOut}. Ignoring timeOut.`);
+        console.warn(`⚠️ Invalid timeOut format for employee ${employee.employeeId} on ${todayDate.toISOString().split('T')[0]}: ${timeOut}. Ignoring timeOut.`);
         timeOut = null;
       }
 
-      // Determine status based on punch times
+      // Determine attendance status
       if (firstInPunch) {
         const [inHours, inMinutes] = timeIn.split(':').map(Number);
         const inTotalMinutes = inHours * 60 + inMinutes;
@@ -371,7 +379,7 @@ async function processPunchLogAttendance() {
           timeOut,
           status,
           halfDay: null,
-          ot: 0,
+          ot: 0
         });
         console.log(`Created attendance for employee ${employee.employeeId} with status: ${status}`);
       }
@@ -384,9 +392,10 @@ async function processPunchLogAttendance() {
       }
     }
 
-    console.log(`processPunchLogAttendance at ${new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' })} completed.`);
+    console.log(`processPunchLogAttendance completed at ${new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' })}`);
   } catch (err) {
     console.error('❌ Error processing punch log attendance:', err.message, err.stack);
+    throw err;
   }
 }
 
@@ -778,31 +787,63 @@ async function processLateArrivalsAndAbsents() {
 //   }
 // }
 
-//Late window (within or outside)
 async function processLateArrivalStatus() {
   try {
-    // Current date for processing
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(today.getDate() + 1);
+    // Set today to UTC midnight of the current local date (August 1, 2025, 00:00 IST = 2025-08-01T00:00:00.000+00:00 UTC)
+    const now = new Date();
+    const todayIST = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+    todayIST.setUTCHours(0, 0, 0, 0); // Midnight IST
+    const todayUTC = new Date(Date.UTC(todayIST.getUTCFullYear(), todayIST.getUTCMonth(), todayIST.getUTCDate()));
+    const yesterdayUTC = new Date(todayUTC);
+    yesterdayUTC.setUTCDate(todayUTC.getUTCDate() - 1);
+    const tomorrowUTC = new Date(todayUTC);
+    tomorrowUTC.setUTCDate(todayUTC.getUTCDate() + 1);
 
-    // Fetch all employees and today's punches
-    const employees = await Employee.find();
-    const todayPunches = await RawPunchlog.find({ LogDate: today });
-    const logsByUser = {};
+    // Adjust range to start from previous day's 18:30:00 UTC to next day's 18:30:00 UTC
+    const startOfDayUTC = new Date(todayUTC);
+    startOfDayUTC.setUTCHours(18, 30, 0, 0); // 6:30 PM UTC (previous day's 18:30:00 UTC as per your example)
+    if (startOfDayUTC > todayUTC) {
+      startOfDayUTC.setUTCDate(startOfDayUTC.getUTCDate() - 1); // Ensure it’s the previous day if needed
+    }
+    const endOfDayUTC = new Date(startOfDayUTC);
+    endOfDayUTC.setUTCDate(startOfDayUTC.getUTCDate() + 1);
+
+    console.log(`Processing records from ${startOfDayUTC.toISOString()} to ${endOfDayUTC.toISOString()}`);
+
+    // Fetch all today's attendance records in UTC
+    const existingAttendances = await Attendance.find({
+      logDate: { $gte: startOfDayUTC, $lt: endOfDayUTC }
+    });
+
+    if (!existingAttendances.length) {
+      console.log('No attendance records found for today in UTC range.');
+      return;
+    }
+
+    // Fetch punches where LogTime > 9:00 AM
+    const todayPunches = await RawPunchlog.find({
+      LogDate: { $gte: startOfDayUTC, $lt: endOfDayUTC },
+      LogTime: { $gt: '09:00:00' }
+    });
 
     // Group punches by UserID
+    const logsByUser = {};
     todayPunches.forEach(log => {
       const key = log.UserID;
       if (!logsByUser[key]) logsByUser[key] = [];
       logsByUser[key].push(log);
     });
 
-    for (const employee of employees) {
+    for (const attendance of existingAttendances) {
+      const employee = await Employee.findOne({ employeeId: attendance.employeeId });
+      if (!employee) continue;
+
       const userId = employee.userId;
       const logs = logsByUser[userId] || [];
-      if (!logs.length) continue; // Skip employees with no punches
+      if (!logs.length) {
+        console.log(`No punches found for ${attendance.employeeId}, skipping update.`);
+        continue;
+      }
 
       // Sort punches by time
       logs.sort((a, b) => 
@@ -813,51 +854,33 @@ async function processLateArrivalStatus() {
       const lastPunch = logs[logs.length - 1];
       let fnStatus = null;
       let anStatus = null;
-      let halfDay = null;
-      let approvalStatus = 'NotRequired';
+      let halfDay = attendance.halfDay; // Preserve existing halfDay
+      let approvalStatus = attendance.approvalStatus; // Preserve existing approvalStatus
 
-      // Fetch existing attendance record
-      let attendance = await Attendance.findOne({
-        employeeId: employee.employeeId,
-        logDate: today,
-      });
-
-      // Parse first punch time for FN status
-      const firstPunchTime = firstPunch.LogTime;
-      const [hours, minutes] = firstPunchTime.split(':').map(Number);
+      // Parse timeIn from attendance (existing record)
+      const timeIn = attendance.timeIn;
+      if (!timeIn) {
+        console.log(`No timeIn for ${attendance.employeeId}, skipping update.`);
+        continue;
+      }
+      const [hours, minutes] = timeIn.split(':').map(Number);
       const totalMinutes = hours * 60 + minutes;
 
-      // Determine FN status based on first punch time
-      if (totalMinutes < 720) { // Before 12:00 PM (Forenoon)
+      // Determine FN status for late arrivals based on existing timeIn
+      if (totalMinutes > 540) { // After 9:00 AM
         if (totalMinutes >= 540 && totalMinutes <= 555) { // 9:00 to 9:15
           fnStatus = 'Present (LA)';
           approvalStatus = 'Pending';
-          halfDay = null;
         } else if (totalMinutes > 555) { // After 9:15
-          fnStatus = 'Present (LA))';
-          approvalStatus = 'NotRequired';
-          halfDay = null;
-        } else {
-          fnStatus = 'Present';
+          fnStatus = 'Present (LA)';
           approvalStatus = 'NotRequired';
         }
-      } else { // 12:00 PM or later (Afternoon)
-        fnStatus = 'AWI';
-        if (totalMinutes >= 810 && totalMinutes <= 825) { // 13:30 to 13:45
-          anStatus = 'Present (LA)';
-          approvalStatus = 'Pending';
-          halfDay = null;
-        } else if (totalMinutes > 825) { // After 13:45
-          anStatus = 'Present (LA)';
-          approvalStatus = 'NotRequired';
-          halfDay = null;
-        } else {
-          anStatus = 'Present';
-          approvalStatus = 'NotRequired';
-        }
+      } else {
+        // Skip if timeIn is before or at 9:00 AM, no update needed
+        continue;
       }
 
-      // Determine AN status based on logout time (if available)
+      // Determine AN status based on logout time if available
       if (lastPunch !== firstPunch && lastPunch.LogTime) {
         const lastPunchTime = lastPunch.LogTime;
         const [lastHours, lastMinutes] = lastPunchTime.split(':').map(Number);
@@ -865,88 +888,68 @@ async function processLateArrivalStatus() {
 
         if (lastTotalMinutes >= 1050) { // 17:30 or later
           anStatus = 'Present';
-        } else if (!anStatus) { // If no AN status set and logout before 17:30
+        } else if (!anStatus) {
           anStatus = 'AWI';
         }
       } else if (!anStatus) {
-        // No logout punch or same as first punch, and no AN status from first punch
-        anStatus = '-'; // Will be updated in future syncs
+        anStatus = '-'; // Pending future syncs
       }
 
-      // Combine statuses for final status field
-      let status;
-      if (fnStatus && anStatus) {
-        status = `FN: ${fnStatus} & AN: ${anStatus}`;
-      } else if (fnStatus) {
-        status = `FN: ${fnStatus}${anStatus ? ` & AN: ${anStatus}` : ''}`;
-      } else {
-        status = `AN: ${anStatus}`;
-      }
+      // Combine statuses
+      const status = fnStatus && anStatus 
+        ? `FN: ${fnStatus} & AN: ${anStatus}`
+        : fnStatus 
+          ? `FN: ${fnStatus}${anStatus ? ` & AN: ${anStatus}` : ''}`
+          : `AN: ${anStatus}`;
 
-      // Preserve existing timeIn if record exists
-      const timeIn = attendance ? attendance.timeIn : firstPunchTime;
-      const timeOut = lastPunch !== firstPunch ? lastPunch.LogTime : null;
-
-      if (attendance) {
-        // Update existing record only if status or timeOut changed
-        if (attendance.status !== status || attendance.timeOut !== timeOut) {
-          attendance.timeIn = timeIn;
-          attendance.timeOut = timeOut;
-          attendance.status = status;
-          attendance.halfDay = halfDay;
-          attendance.approvalStatus = approvalStatus;
-          attendance.ot = 0;
-          await attendance.save();
-          console.log(`Updated attendance for ${employee.employeeId}: ${status}`);
-        }
+      // Update only if status or approvalStatus changed
+      const timeOut = lastPunch !== firstPunch ? lastPunch.LogTime : attendance.timeOut;
+      if (attendance.status !== status || attendance.approvalStatus !== approvalStatus) {
+        attendance.status = status;
+        attendance.timeOut = timeOut;
+        attendance.approvalStatus = approvalStatus;
+        attendance.logDate = todayUTC; // Ensure logDate is UTC midnight
+        await attendance.save();
+        console.log(`Updated attendance for ${attendance.employeeId} to: ${status}`);
       } else {
-        // Create new attendance record
-        await Attendance.create({
-          employeeId: employee.employeeId,
-          userId,
-          name: employee.name,
-          logDate: today,
-          timeIn: firstPunchTime,
-          timeOut,
-          status,
-          halfDay,
-          approvalStatus,
-          ot: 0,
-        });
-        console.log(`Created attendance for ${employee.employeeId}: ${status}`);
+        console.log(`No changes needed for ${attendance.employeeId}`);
       }
     }
 
     // Process HOD approvals for previous day's pending cases
-    const previousDay = new Date(today);
-    previousDay.setDate(today.getDate() - 1);
+    const previousDayUTC = new Date(startOfDayUTC);
+    previousDayUTC.setUTCDate(startOfDayUTC.getUTCDate() - 1);
     const pendingAttendances = await Attendance.find({
-      logDate: previousDay,
-      approvalStatus: 'Pending',
+      logDate: previousDayUTC,
+      approvalStatus: 'Pending'
     });
 
     for (const attendance of pendingAttendances) {
       const approval = await Approval.findOne({
         attendanceId: attendance._id,
         approved: { $exists: true },
-        approvalDate: { $gte: previousDay, $lte: tomorrow },
+        approvalDate: { $gte: previousDayUTC, $lt: startOfDayUTC }
       });
 
       if (approval && approval.approved) {
         attendance.status = attendance.status.replace('Present (LA)', 'Present [LA (Allowed)]');
         attendance.approvalStatus = 'Approved';
       } else {
-        attendance.status = attendance.status.replace('Late (Pending)', 'Present [LA (Denied)]');
+        attendance.status = attendance.status.replace('Present (LA)', 'Present [LA (Denied)]');
         attendance.approvalStatus = 'Rejected';
       }
       await attendance.save();
       console.log(`Processed approval for ${attendance.employeeId}: ${attendance.status}`);
     }
+
+    console.log('Late arrival processing completed successfully.');
   } catch (err) {
-    console.error('Error processing late arrival status:', err);
+    console.error('Error processing late arrival status:', err.message, err.stack);
     throw err;
   }
 }
+
+
 
 async function updateAttendanceWithLeaves() {
   try {
@@ -1226,7 +1229,135 @@ async function processPunchLogOD() {
 }
 
 
-export { processLateArrivalsAndAbsents, updateAttendanceWithLeaves, updateAttendanceWithOD, processLateArrivalStatus, processPunchLogAttendance, processPunchLogOD};
+async function updateAWIStatus() {
+  try {
+    // Set base date in UTC (midnight)
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0); // 2025-08-01T00:00:00.000+00:00
+    const tomorrow = new Date(today);
+    tomorrow.setDate(today.getDate() + 1);
+
+    // Fetch attendance records with AWI status for today
+    const awiAttendances = await Attendance.find({
+      logDate: { $gte: today, $lt: tomorrow },
+      status: { $regex: /AWI/ } // Match any status containing AWI
+    });
+
+    if (!awiAttendances.length) {
+      console.log('No AWI statuses found for processing today.');
+      return;
+    }
+
+    // Get unique employee IDs
+    const employeeIds = awiAttendances.map(att => att.employeeId);
+
+    // Fetch corresponding punches where LogTime > 9:00 AM
+    const todayPunches = await RawPunchlog.find({
+      LogDate: { $gte: today, $lt: tomorrow },
+      LogTime: { $gt: '09:00:00' },
+      UserID: { $in: (await Employee.find({ employeeId: { $in: employeeIds } })).map(emp => emp.userId) }
+    });
+
+    // Group punches by UserID
+    const logsByUser = {};
+    todayPunches.forEach(log => {
+      const key = log.UserID;
+      if (!logsByUser[key]) logsByUser[key] = [];
+      logsByUser[key].push(log);
+    });
+
+    for (const attendance of awiAttendances) {
+      const employee = await Employee.findOne({ employeeId: attendance.employeeId });
+      if (!employee) continue;
+
+      const userId = employee.userId;
+      const logs = logsByUser[userId] || [];
+      if (!logs.length) {
+        console.log(`No punches found for ${attendance.employeeId}, skipping update.`);
+        continue;
+      }
+
+      // Sort punches by time
+      logs.sort((a, b) => 
+        new Date(`1970-01-01T${a.LogTime}Z`) - new Date(`1970-01-01T${b.LogTime}Z`)
+      );
+
+      const firstPunch = logs[0];
+      const lastPunch = logs[logs.length - 1];
+      let fnStatus = null;
+      let anStatus = null;
+      let approvalStatus = attendance.approvalStatus; // Preserve existing approval status
+      let halfDay = attendance.halfDay; // Preserve existing halfDay
+
+      // Parse first punch time
+      const firstPunchTime = firstPunch.LogTime;
+      const [hours, minutes] = firstPunchTime.split(':').map(Number);
+      const totalMinutes = hours * 60 + minutes;
+
+      // Determine FN status for late arrivals
+      if (totalMinutes < 720) { // Before 12:00 PM
+        if (totalMinutes >= 540 && totalMinutes <= 555) { // 9:00 to 9:15
+          fnStatus = 'Present (LA)';
+          approvalStatus = 'Pending';
+        } else if (totalMinutes > 555) { // After 9:15
+          fnStatus = 'Present (LA)';
+          approvalStatus = 'NotRequired';
+        }
+      } else { // 12:00 PM or later
+        fnStatus = 'AWI';
+        if (totalMinutes >= 810 && totalMinutes <= 825) { // 13:30 to 13:45
+          anStatus = 'Present (LA)';
+          approvalStatus = 'Pending';
+        } else if (totalMinutes > 825) { // After 13:45
+          anStatus = 'Present (LA)';
+          approvalStatus = 'NotRequired';
+        } else {
+          anStatus = 'Present';
+        }
+      }
+
+      // Determine AN status based on logout time
+      if (lastPunch !== firstPunch && lastPunch.LogTime) {
+        const lastPunchTime = lastPunch.LogTime;
+        const [lastHours, lastMinutes] = lastPunchTime.split(':').map(Number);
+        const lastTotalMinutes = lastHours * 60 + lastMinutes;
+
+        if (lastTotalMinutes >= 1050) { // 17:30 or later
+          anStatus = 'Present';
+        } else if (!anStatus) {
+          anStatus = 'AWI';
+        }
+      } else if (!anStatus) {
+        anStatus = '-'; // Pending future syncs
+      }
+
+      // Combine statuses
+      const newStatus = fnStatus && anStatus 
+        ? `FN: ${fnStatus} & AN: ${anStatus}`
+        : fnStatus 
+          ? `FN: ${fnStatus}${anStatus ? ` & AN: ${anStatus}` : ''}`
+          : `AN: ${anStatus}`;
+
+      // Update only if status differs
+      if (attendance.status !== newStatus) {
+        attendance.status = newStatus;
+        attendance.approvalStatus = approvalStatus;
+        attendance.logDate = today; // Ensure logDate is UTC midnight
+        await attendance.save();
+        console.log(`Updated AWI status for ${attendance.employeeId} to: ${newStatus}`);
+      } else {
+        console.log(`No status change needed for ${attendance.employeeId}`);
+      }
+    }
+
+    console.log('AWI status update completed successfully.');
+  } catch (err) {
+    console.error('Error updating AWI status:', err.message, err.stack);
+    throw err;
+  }
+}
+
+export { processLateArrivalsAndAbsents, updateAttendanceWithLeaves, updateAttendanceWithOD, processLateArrivalStatus, processPunchLogAttendance, processPunchLogOD, updateAWIStatus};
 
 // async function updateAttendanceWithOD() {
 //   try {
