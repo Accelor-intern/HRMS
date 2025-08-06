@@ -82,9 +82,9 @@ const employeeSchema = new mongoose.Schema({
       required: function() { return this.paymentType === 'Bank Transfer'; } 
     },
   },
-  ctc: { type: Number, required: true },
-  basic: { type: Number, required: true },
-  inHand: { type: Number, required: true },
+  ctc: { type: Number }, // Removed required: true
+  basic: { type: Number }, // Removed required: true
+  inHand: { type: Number }, // Removed required: true
   locked: { type: Boolean, default: true },
   basicInfoLocked: { type: Boolean, default: true },
   positionLocked: { type: Boolean, default: true },
@@ -112,10 +112,10 @@ const employeeSchema = new mongoose.Schema({
   lastPunchMissedSubmission: { type: Date }, // Tracks last Punch Missed Form submission
     shift: { 
     type: String, 
-    enum: ['General (09:00-17:30)', 'Shift A (06:00-14:30)', 'Shift B (14:00-22:30)','Shift C (22:00-06:30)','Regular', 'C Shift', 'A Shift', 'B Shift', 'General'], 
+    enum: ['General (09:00-17:30)', 'Shift A (06:00-14:30)', 'Shift B (14:00-22:30)', 'Shift C (22:00-06:30)', 'Regular', 'C Shift', 'A Shift', 'B Shift', 'General'], 
     default: 'General (09:00-17:30)' 
-  }, // Shift assignment: Regular (9:00 AM–5:30 PM), B Shift (2:00 PM–10:30 PM), C Shift (10:00 PM–6:30 AM)
-    shiftEffectiveFrom: { type: Date, default: Date.now }, // Effective date of shift assignment
+  }, // Shift assignment
+  shiftEffectiveFrom: { type: Date, default: Date.now }, // Effective date of shift assignment
   shiftValidUpto: { type: Date }, // Validity end date of shift assignment
   attendanceHistory: [{ // New field for attendance history
     date: { type: Date, required: true },
@@ -124,7 +124,6 @@ const employeeSchema = new mongoose.Schema({
     leaveId: { type: mongoose.Schema.Types.ObjectId, ref: 'Leave', default: null }
   }]
 }, { timestamps: true });
-  
 
 // Middleware to handle password hashing
 employeeSchema.pre('save', async function(next) {
@@ -388,7 +387,7 @@ employeeSchema.methods.comparePassword = async function(password) {
   return await bcrypt.compare(password, this.password);
 };
 
-// In Employee.js, replace the checkConsecutivePaidLeaves method
+// Method to check consecutive paid leaves
 employeeSchema.methods.checkConsecutivePaidLeaves = async function (newLeaveStart, newLeaveEnd) {
   const normalizeDate = (date) => {
     const d = new Date(date);
@@ -403,7 +402,7 @@ employeeSchema.methods.checkConsecutivePaidLeaves = async function (newLeaveStar
     { month: 9, day: 2 }, // Gandhi Jayanti
     { month: 9, day: 21 }, // Dussehra
     { month: 9, day: 22 }, // Diwali
-    { month: 10, day: 5 }, // Guru Nanak Jayenti
+    { month: 10, day: 5 }, // Guru Nanak Jayanti
   ];
 
   const isHoliday = (date) => {

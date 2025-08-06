@@ -15,6 +15,7 @@ router.get('/', auth, async (req, res) => {
   try {
     let filter = {};
 
+
     // Apply role-based restrictions
     if (req.user.loginType === 'Employee') {
       filter = { employeeId: req.user.employeeId };
@@ -60,24 +61,31 @@ router.get('/', auth, async (req, res) => {
       filter.name = { $regex: new RegExp(req.query.name, 'i') }; // Case-insensitive search
     }
 
-    // Apply date range filter
-    if (req.query.fromDate) {
-      const fromDate = new Date(req.query.fromDate);
-      if (isNaN(fromDate)) {
-        return res.status(400).json({ message: 'Invalid fromDate format' });
-      }
-      // Adjust to UTC equivalent of IST start of day
-      const fromDateUTC = new Date(fromDate.getTime() - (5.5 * 60 * 60 * 1000));
-      fromDateUTC.setUTCHours(0, 0, 0, 0);
-      const toDate = req.query.toDate ? new Date(req.query.toDate) : new Date(fromDate);
-      if (isNaN(toDate)) {
-        return res.status(400).json({ message: 'Invalid toDate format' });
-      }
-      // Adjust to UTC equivalent of IST end of day
-      const toDateUTC = new Date(toDate.getTime() - (5.5 * 60 * 60 * 1000));
-      toDateUTC.setUTCHours(23, 59, 59, 999);
-      filter.logDate = { $gte: fromDateUTC, $lte: toDateUTC };
-    }
+   // Apply fixed IST date filter: from yesterday 6:30 PM IST to today 12:00 AM IST
+const istNow = new Date();
+const istTodayStart = new Date(istNow);
+istTodayStart.setHours(0, 0, 0, 0); // today 00:00 IST
+
+const targetDateIST = new Date(istTodayStart);
+targetDateIST.setDate(istTodayStart.getDate() ); // yesterday
+
+const startOfDayUTC = new Date(Date.UTC(
+  targetDateIST.getUTCFullYear(),
+  targetDateIST.getUTCMonth(),
+  targetDateIST.getUTCDate()
+));
+startOfDayUTC.setUTCHours(18, 30, 0, 0); // 6:30 PM IST yesterday in UTC
+
+const endOfDayUTC = new Date(Date.UTC(
+  istTodayStart.getUTCFullYear(),
+  istTodayStart.getUTCMonth(),
+  istTodayStart.getUTCDate()
+));
+endOfDayUTC.setUTCDate(endOfDayUTC.getUTCDate() + 1); // Move to next day
+endOfDayUTC.setUTCHours(0, 0, 0, 0); // 00:00 IST next day (in UTC)
+
+
+filter.logDate = { $gte: startOfDayUTC, $lte: endOfDayUTC };
 
     // Apply status filter
     if (req.query.status && req.query.status !== 'all') {

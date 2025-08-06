@@ -14,13 +14,426 @@ const router = express.Router();
 
 
 
+router.post(
+  "/",
+  auth,
+  role(["Employee", "HOD", "Admin"]),
+ upload.any(),
+  async (req, res) => {
+   try {
+      const user = await Employee.findById(req.user.id);
+      if (!user) return res.status(404).json({ message: "Employee not found" });
+      if (!user.designation) return res.status(400).json({ message: "Employee designation is required" });
+      if (!user.department) return res.status(400).json({ message: "Employee department is required" });
+
+      const today = new Date();
+      today.setUTCHours(0, 0, 0, 0);
+      const sevenDaysAgo = new Date(today);
+      sevenDaysAgo.setDate(today.getDate() - 7);
+      const sevenDaysFuture = new Date(today);
+      sevenDaysFuture.setDate(today.getDate() + 7);
+
+      // Debug: Log raw req.body and req.files
+      console.log("Raw req.body:", req.body);
+      console.log("Raw req.files:", req.files);
+
+ const parseSegments = (formData, files) => {
+  console.log("parseSegments input formData:", formData);
+  console.log("parseSegments input files:", files);
+  if (!Array.isArray(formData.segments)) {
+    console.log("No segments array found in formData");
+    return [];
+  }
+
+  const segments = formData.segments.map((segment, index) => {
+    console.log(`Processing segment ${index}:`, segment);
+    const fromDuration = segment.fullDay?.fromDuration || "full";
+    const toDuration = segment.fullDay?.to ? (segment.fullDay?.toDuration || "full") : "";
+    return {
+      leaveType: segment.leaveType || "",
+      isEmergency: segment.isEmergency === "true" || segment.isEmergency === true,
+      fullDay: {
+        from: segment.fullDay?.from || "",
+        fromDuration,
+        fromSession: fromDuration === "half" ? (segment.fullDay?.fromSession || "forenoon") : null,
+        to: segment.fullDay?.to || "",
+        toDuration,
+        toSession: toDuration === "half" ? (segment.fullDay?.toSession || "forenoon") : null,
+      },
+      compensatoryEntryId: segment.compensatoryEntryId || "",
+      restrictedHoliday: segment.restrictedHoliday || "",
+      projectDetails: segment.projectDetails || "",
+      medicalCertificate: files.find((f) => f.fieldname?.includes(`segments[${index}][medicalCertificate]`)) || null,
+    };
+  });
+
+  console.log("Generated segments:", segments);
+  return segments.filter(Boolean);
+};
+
+      const leaveSegments = parseSegments(req.body, req.files || []);
+      console.log("Parsed leaveSegments:", leaveSegments);
+
+      if (!leaveSegments.length) {
+        return res.status(400).json({ message: "No leave segments provided" });
+      }
+
+      if (!req.body.reason) return res.status(400).json({ message: "Reason is required" });
+      if (!req.body.chargeGivenTo) return res.status(400).json({ message: "Charge Given To is required" });
+      if (!req.body.emergencyContact) return res.status(400).json({ message: "Emergency Contact is required" });
+
+      let compositeLeaveId = leaveSegments.length > 1 ? await generateNextCompositeLeaveId() : null;
+      if (leaveSegments.length > 1 && !compositeLeaveId) {
+        return res.status(500).json({ message: "Failed to generate composite leave ID" });
+      }
+
+      const todayStr = today.toISOString().split("T")[0];
+      const errors = [];
+      const savedLeaves = [];
+
+      for (const [index, segment] of leaveSegments.entries()) {
+        try {
+          if (!segment.leaveType) throw new Error("Leave Type is required");
+          if (!segment.fullDay.from) throw new Error("From date is required");
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(segment.fullDay.from)) {
+            throw new Error("Invalid from date format (expected YYYY-MM-DD)");
+          }
+          const leaveStart = new Date(segment.fullDay.from);
+          if (isNaN(leaveStart.getTime())) throw new Error("Invalid from date");
+          const fromDuration = segment.fullDay.fromDuration || "full";
+          const fromSession = segment.fullDay.fromSession || "";
+          if (!["full", "half"].includes(fromDuration)) {
+            throw new Error("Invalid fromDuration, must be 'full' or 'half'");
+          }
+          if (fromDuration === "half" && !["forenoon", "afternoon"].includes(fromSession)) {
+            throw new Error("Invalid fromSession, must be 'forenoon' or 'afternoon'");
+          }
+          if (fromDuration === "half" && !fromSession) {
+            throw new Error("fromSession is required for half-day fromDuration");
+          }
+
+          let leaveEnd = leaveStart;
+          let toDuration = "";
+          let toSession = "";
+          let leaveDays = fromDuration === "half" ? 0.5 : 1;
+
+          if (segment.fullDay.to) {
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(segment.fullDay.to)) {
+              throw new Error("Invalid to date format (expected YYYY-MM-DD)");
+            }
+            leaveEnd = new Date(segment.fullDay.to);
+            if (isNaN(leaveEnd.getTime())) throw new Error("Invalid to date");
+            toDuration = segment.fullDay.toDuration || "full";
+            toSession = segment.fullDay.toSession || "";
+            if (!["full", "half"].includes(toDuration)) {
+              throw new Error("Invalid toDuration, must be 'full' or 'half'");
+            }
+            if (toDuration === "half" && toSession !== "forenoon") {
+              throw new Error("toSession must be 'forenoon' for half-day toDuration");
+            }
+            if (toDuration === "half" && !toSession) {
+              throw new Error("toSession is required for half-day toDuration");
+            }
+            if (leaveStart.toISOString().split("T")[0] === leaveEnd.toISOString().split("T")[0]) {
+              if (fromDuration === "full" && toDuration === "full") {
+                leaveDays = 1;
+              } else if (fromDuration === "half" && toDuration === "half" && fromSession === "afternoon" && toSession === "forenoon") {
+                leaveDays = 0.5;
+              } else {
+                throw new Error("Invalid duration combination for same-day leave");
+              }
+            } else {
+             const fixedHolidays = [
+  new Date(2025, 0, 26),
+  new Date(2025, 2, 14),
+  new Date(2025, 7, 15),
+  new Date(2025, 9, 2),
+  new Date(2025, 9, 21),
+  new Date(2025, 9, 22),
+  new Date(2025, 10, 5),
+];
+
+const isHoliday = (date) =>
+  date.getDay() === 0 ||  // Sunday
+  fixedHolidays.some((holiday) => holiday.toDateString() === date.toDateString());
+
+let leaveDays = 0;
+let current = new Date(leaveStart);
+current.setHours(0, 0, 0, 0);
+let end = new Date(leaveEnd);
+end.setHours(0, 0, 0, 0);
+
+while (current <= end) {
+  const isFromDate = current.toISOString().split("T")[0] === leaveStart.toISOString().split("T")[0];
+  const isToDate = current.toISOString().split("T")[0] === leaveEnd.toISOString().split("T")[0];
+
+  if (!isHoliday(current)) {
+    if (isFromDate && fromDuration === "half") {
+      leaveDays += 0.5;
+    } else if (isToDate && toDuration === "half") {
+      leaveDays += 0.5;
+    } else if (!(isFromDate && fromDuration === "half") && !(isToDate && toDuration === "half")) {
+      leaveDays += 1;
+    }
+  }
+
+  current.setDate(current.getDate() + 1);
+}
+
+
+            }
+          }
+
+          if (leaveStart > leaveEnd) {
+            throw new Error("Leave start date cannot be after end date");
+          }
+
+          if (segment.isEmergency && fromDuration === "full" && leaveStart.toISOString().split("T")[0] !== todayStr) {
+            throw new Error("Full-day Emergency leave must be for the current date only");
+          }
+          if (!segment.isEmergency && leaveStart <= today) {
+            throw new Error("From date must be after today for non-Emergency leave");
+          }
+
+          if (segment.leaveType === "Medical") {
+            if (leaveStart < sevenDaysAgo || leaveStart > sevenDaysFuture) {
+              throw new Error("Medical leave from date must be within 7 days prior and 7 days future from today");
+            }
+            if (!segment.fullDay.to) {
+              throw new Error("To date is required for Medical leave");
+            }
+          }
+
+          if (!segment.isEmergency) {
+            const overlappingChargeAssignments = await Leave.find({
+              chargeGivenTo: user._id,
+              $or: [
+                {
+                  "fullDay.from": { $lte: leaveEnd },
+                  "fullDay.to": { $gte: leaveStart },
+                  $and: [
+                    { "status.hod": { $ne: "Rejected" } },
+                    { "status.ceo": { $ne: "Rejected" } },
+                    { "status.admin": { $in: ["Pending", "Acknowledged"] } },
+                  ],
+                },
+              ],
+            });
+            if (overlappingChargeAssignments.length > 0) {
+              const leaveDetails = overlappingChargeAssignments[0];
+              const dateRangeStr = `from ${new Date(leaveDetails.fullDay.from).toISOString().split("T")[0]}${
+                leaveDetails.fullDay.fromDuration === "half" ? ` (${leaveDetails.fullDay.fromSession})` : ""
+              }${leaveDetails.fullDay.to ? ` to ${new Date(leaveDetails.fullDay.to).toISOString().split("T")[0]}${
+                leaveDetails.fullDay.toDuration === "half" ? ` (${leaveDetails.fullDay.toSession})` : ""
+              }` : ""}`;
+              throw new Error(
+                `You are assigned as Charge Given To for a leave ${dateRangeStr} and cannot apply for non-Emergency leaves during this period.`
+              );
+            }
+          }
+
+          const chargeGivenToEmployee = await Employee.findById(req.body.chargeGivenTo);
+          if (!chargeGivenToEmployee) {
+            throw new Error("Selected employee for Charge Given To not found");
+          }
+          const startDateOnly = new Date(leaveStart.setHours(0, 0, 0, 0));
+          const endDateOnly = new Date(leaveEnd.setHours(0, 0, 0, 0));
+          const overlappingLeaves = await Leave.find({
+            $or: [
+              {
+                chargeGivenTo: req.body.chargeGivenTo,
+                $or: [
+                  {
+                    "fullDay.from": { $lte: leaveEnd },
+                    "fullDay.to": { $gte: leaveStart },
+                    $and: [
+                      { "status.hod": { $in: ["Pending", "Approved"] } },
+                      { "status.ceo": { $in: ["Pending", "Approved"] } },
+                      { "status.admin": { $in: ["Pending", "Acknowledged"] } },
+                    ],
+                  },
+                ],
+              },
+              {
+                employee: req.body.chargeGivenTo,
+                $or: [
+                  {
+                    "fullDay.from": { $lte: leaveEnd },
+                    "fullDay.to": { $gte: leaveStart },
+                    $and: [
+                      { "status.hod": { $in: ["Pending", "Approved"] } },
+                      { "status.ceo": { $in: ["Pending", "Approved"] } },
+                      { "status.admin": { $in: ["Pending", "Acknowledged"] } },
+                    ],
+                  },
+                ],
+              },
+            ],
+          });
+          if (overlappingLeaves.length > 0) {
+            throw new Error(
+              "Selected employee is either already assigned as Charge Given To or has a pending/approved leave for the specified date range"
+            );
+          }
+
+          const leaveType = segment.leaveType;
+          const isConfirmed = user.employeeType === "Confirmed";
+          const joinDate = new Date(user.dateOfJoining);
+          const yearsOfService = (new Date() - joinDate) / (1000 * 60 * 60 * 24 * 365);
+
+          switch (leaveType) {
+            case "Casual":
+              const canTakeCasualLeave = await user.checkConsecutivePaidLeaves(leaveStart, leaveEnd);
+              if (!canTakeCasualLeave) {
+                throw new Error("Cannot take more than 3 consecutive paid leave days.");
+              }
+              if (user.paidLeaves < leaveDays) {
+                throw new Error("Insufficient Casual leave balance.");
+              }
+              break;
+case "Medical":
+  if (!isConfirmed) throw new Error("Medical leave is only for confirmed employees.");
+  if (user.medicalLeaves < leaveDays) throw new Error("Insufficient Medical leave balance.");
+  const medicalLeavesThisYear = await Leave.find({
+    employeeId: user.employeeId,
+    leaveType: "Medical",
+    "status.admin": "Acknowledged",
+    "fullDay.from": { $gte: new Date(today.getFullYear(), 0, 1) },
+  });
+  if (medicalLeavesThisYear.length > 0) {
+    throw new Error("Medical leave can only be used once per year.");
+  }
+  // Deduct leave days
+  user.medicalLeaves -= leaveDays;
+  break;   case "Maternity":
+              if (!isConfirmed || user.gender?.trim().toLowerCase() !== "female") {
+                throw new Error("Maternity leave is only for confirmed female employees.");
+              }
+              if (yearsOfService < 1) throw new Error("Must have completed one year of service.");
+              if (leaveDays !== 90) throw new Error("Maternity leave must be exactly 90 days.");
+              break;
+            case "Paternity":
+              if (!isConfirmed || user.gender?.trim().toLowerCase() !== "male") {
+                throw new Error("Paternity leave is only for confirmed male employees.");
+              }
+              if (yearsOfService < 1) throw new Error("Must have completed one year of service.");
+              if (leaveDays !== 7) throw new Error("Paternity leave must be exactly 7 days.");
+              break;
+            case "Compensatory":
+              const compensatoryEntry = await CompensatoryLeave.findById(segment.compensatoryEntryId);
+              if (!compensatoryEntry || compensatoryEntry.employeeId.toString() !== user._id.toString() || compensatoryEntry.status !== "Available") {
+                throw new Error("Invalid or unavailable compensatory leave entry.");
+              }
+              const hoursNeeded = fromDuration === "half" ? 4 : 8;
+              if (compensatoryEntry.hours !== hoursNeeded) {
+                throw new Error(
+                  `Compensatory entry (${compensatoryEntry.hours} hours) does not match leave duration (${fromDuration === "half" ? "4 hours" : "8 hours"})`
+                );
+              }
+              break;
+            case "Restricted Holidays":
+              if (!isConfirmed) throw new Error("Restricted Holidays are only for confirmed employees.");
+              if (user.restrictedHolidays <= 0) throw new Error("No restricted holidays available this year.");
+              if (leaveDays !== 1) throw new Error("Restricted Holiday must be exactly 1 day.");
+              break;
+            case "Leave Without Pay(LWP)":
+              if (leaveDays > 30) throw new Error("Leave Without Pay cannot exceed 30 days.");
+              break;
+            case "Emergency":
+              if (!segment.isEmergency) throw new Error("Emergency leave must have isEmergency set to true.");
+              if (leaveDays > 1) throw new Error("Emergency leave can only be half day or one full day.");
+              break;
+            default:
+              throw new Error("Invalid leave type specified.");
+          }
+
+          const leave = new Leave({
+            employee: user._id,
+            employeeId: user.employeeId,
+  name: user.name,
+  designation: user.designation,
+  department: user.department,
+            leaveType: segment.leaveType,
+            fullDay: {
+              from: leaveStart,
+              fromDuration,
+              fromSession,
+              to: segment.fullDay.to ? leaveEnd : undefined,
+              toDuration: segment.fullDay.to ? toDuration : undefined,
+              toSession: segment.fullDay.to ? toSession : undefined,
+            },
+            reason: req.body.reason,
+            chargeGivenTo: req.body.chargeGivenTo,
+            emergencyContact: req.body.emergencyContact,
+            projectDetails: segment.projectDetails || "",
+            compositeLeaveId,
+            status: {
+              hod: "Pending",
+              ceo: "Pending",
+              admin: "Pending",
+            },
+          });
+
+          if (segment.medicalCertificate) {
+            leave.medicalCertificate = {
+              data: segment.medicalCertificate.buffer,
+              contentType: segment.medicalCertificate.mimetype,
+            };
+          }
+          if (segment.compensatoryEntryId) {
+            leave.compensatoryEntry = segment.compensatoryEntryId;
+          }
+         if (segment.leaveType === "Restricted Holidays" && segment.restrictedHoliday) {
+  leave.restrictedHoliday = segment.restrictedHoliday;
+}
+
+          const savedLeave = await leave.save();
+          savedLeaves.push(savedLeave);
+
+          if (leaveType === "Compensatory" && compensatoryEntry) {
+            compensatoryEntry.status = "Used";
+            await compensatoryEntry.save();
+          } else if (leaveType === "Medical") {
+            user.medicalLeaves -= leaveDays;
+            await user.save();
+          } else if (leaveType === "Casual") {
+            user.paidLeaves -= leaveDays;
+            await user.save();
+          } else if (leaveType === "Restricted Holidays") {
+            user.restrictedHolidays -= 1;
+            await user.save();
+          }
+
+          if (leaveType === "Emergency") {
+            await Employee.findByIdAndUpdate(user._id, { canApplyEmergencyLeave: false });
+          }
+      } catch (error) {
+  console.log(`Segment ${index} failed:`, error.message, segment); // 👈 log this!
+  errors.push({ segmentIndex: index, message: error.message });
+}
+
+      }
+
+      if (errors.length > 0) {
+        return res.status(400).json({ message: "Partial success", errors });
+      }
+
+      res.status(201).json({ message: "Leave request submitted successfully", data: savedLeaves });
+    } catch (error) {
+      console.error("Leave submission error:", error);
+      res.status(500).json({ message: "Server error", error: error.message });
+    }
+  }
+);
+
+
 // router.post(
 //   "/",
 //   auth,
 //   role(["Employee", "HOD", "Admin"]),
-//  upload.any(),
+//   upload.any(),
 //   async (req, res) => {
-//    try {
+//     try {
 //       const user = await Employee.findById(req.user.id);
 //       if (!user) return res.status(404).json({ message: "Employee not found" });
 //       if (!user.designation) return res.status(400).json({ message: "Employee designation is required" });
@@ -37,39 +450,57 @@ const router = express.Router();
 //       console.log("Raw req.body:", req.body);
 //       console.log("Raw req.files:", req.files);
 
-//  const parseSegments = (formData, files) => {
-//   console.log("parseSegments input formData:", formData);
-//   console.log("parseSegments input files:", files);
-//   if (!Array.isArray(formData.segments)) {
-//     console.log("No segments array found in formData");
-//     return [];
-//   }
+//       const parseSegments = (formData, files) => {
+//         console.log("parseSegments input formData:", formData);
+//         console.log("parseSegments input files:", files);
+//         if (!Array.isArray(formData.segments)) {
+//           console.log("No segments array found in formData");
+//           return [];
+//         }
 
-//   const segments = formData.segments.map((segment, index) => {
-//     console.log(`Processing segment ${index}:`, segment);
-//     const fromDuration = segment.fullDay?.fromDuration || "full";
-//     const toDuration = segment.fullDay?.to ? (segment.fullDay?.toDuration || "full") : "";
-//     return {
-//       leaveType: segment.leaveType || "",
-//       isEmergency: segment.isEmergency === "true" || segment.isEmergency === true,
-//       fullDay: {
-//         from: segment.fullDay?.from || "",
-//         fromDuration,
-//         fromSession: fromDuration === "half" ? (segment.fullDay?.fromSession || "forenoon") : null,
-//         to: segment.fullDay?.to || "",
-//         toDuration,
-//         toSession: toDuration === "half" ? (segment.fullDay?.toSession || "forenoon") : null,
-//       },
-//       compensatoryEntryId: segment.compensatoryEntryId || "",
-//       restrictedHoliday: segment.restrictedHoliday || "",
-//       projectDetails: segment.projectDetails || "",
-//       medicalCertificate: files.find((f) => f.fieldname?.includes(`segments[${index}][medicalCertificate]`)) || null,
-//     };
-//   });
+//         const segments = formData.segments.map((segment, index) => {
+//           console.log(`Processing segment ${index}:`, segment);
+//           const fromDuration = segment.fullDay?.fromDuration || "full";
+//           const toDuration = segment.fullDay?.to ? (segment.fullDay?.toDuration || "full") : "";
 
-//   console.log("Generated segments:", segments);
-//   return segments.filter(Boolean);
-// };
+//           // Normalize from date to midnight UTC
+//           let fromDate = segment.fullDay?.from ? new Date(segment.fullDay.from) : null;
+//           if (fromDate && !isNaN(fromDate.getTime())) {
+//             fromDate.setUTCHours(0, 0, 0, 0); // Set to midnight UTC
+//           } else {
+//             fromDate = null;
+//           }
+
+//           // Normalize to date to midnight UTC (if provided)
+//           let toDate = segment.fullDay?.to ? new Date(segment.fullDay.to) : null;
+//           if (toDate && !isNaN(toDate.getTime())) {
+//             toDate.setUTCHours(0, 0, 0, 0); // Set to midnight UTC
+//           } else {
+//             toDate = null;
+//           }
+
+//           return {
+//             leaveType: segment.leaveType || "",
+//             isEmergency: segment.isEmergency === "true" || segment.isEmergency === true,
+//             fullDay: {
+//               from: fromDate ? fromDate.toISOString() : "",
+//               fromDuration,
+//               fromSession: fromDuration === "half" ? (segment.fullDay?.fromSession || "forenoon") : null,
+//               to: toDate ? toDate.toISOString() : "",
+//               toDuration,
+//               toSession: toDuration === "half" ? (segment.fullDay?.toSession || "forenoon") : null,
+//             },
+//             compensatoryEntryId: segment.compensatoryEntryId || "",
+//        restrictedHoliday: segment.leaveType === "Restricted Holidays" ? (segment.restrictedHoliday || "") : "",
+
+//             projectDetails: segment.projectDetails || "",
+//             medicalCertificate: files.find((f) => f.fieldname?.includes(`segments[${index}][medicalCertificate]`)) || null,
+//           };
+//         });
+
+//         console.log("Generated segments:", segments);
+//         return segments.filter(Boolean);
+//       };
 
 //       const leaveSegments = parseSegments(req.body, req.files || []);
 //       console.log("Parsed leaveSegments:", leaveSegments);
@@ -91,11 +522,29 @@ const router = express.Router();
 //       const errors = [];
 //       const savedLeaves = [];
 
+//       // Define holiday list and isHoliday function
+//       const holidayList = [
+//         { month: 0, day: 26 }, // Republic Day
+//         { month: 2, day: 14 }, // Holi
+//         { month: 7, day: 15 }, // Independence Day
+//         { month: 9, day: 2 }, // Gandhi Jayanti
+//         { month: 9, day: 21 }, // Dussehra
+//         { month: 9, day: 22 }, // Diwali
+//         { month: 10, day: 5 }, // Christmas
+//       ];
+
+//       const isHoliday = (date) => {
+//         return (
+//           holidayList.some((h) => date.getDate() === h.day && date.getMonth() === h.month) ||
+//           date.getDay() === 0 // Sunday
+//         );
+//       };
+
 //       for (const [index, segment] of leaveSegments.entries()) {
 //         try {
 //           if (!segment.leaveType) throw new Error("Leave Type is required");
 //           if (!segment.fullDay.from) throw new Error("From date is required");
-//           if (!/^\d{4}-\d{2}-\d{2}$/.test(segment.fullDay.from)) {
+//           if (!/^\d{4}-\d{2}-\d{2}$/.test(segment.fullDay.from.split("T")[0])) {
 //             throw new Error("Invalid from date format (expected YYYY-MM-DD)");
 //           }
 //           const leaveStart = new Date(segment.fullDay.from);
@@ -118,7 +567,7 @@ const router = express.Router();
 //           let leaveDays = fromDuration === "half" ? 0.5 : 1;
 
 //           if (segment.fullDay.to) {
-//             if (!/^\d{4}-\d{2}-\d{2}$/.test(segment.fullDay.to)) {
+//             if (!/^\d{4}-\d{2}-\d{2}$/.test(segment.fullDay.to.split("T")[0])) {
 //               throw new Error("Invalid to date format (expected YYYY-MM-DD)");
 //             }
 //             leaveEnd = new Date(segment.fullDay.to);
@@ -134,53 +583,37 @@ const router = express.Router();
 //             if (toDuration === "half" && !toSession) {
 //               throw new Error("toSession is required for half-day toDuration");
 //             }
-//             if (leaveStart.toISOString().split("T")[0] === leaveEnd.toISOString().split("T")[0]) {
-//               if (fromDuration === "full" && toDuration === "full") {
-//                 leaveDays = 1;
-//               } else if (fromDuration === "half" && toDuration === "half" && fromSession === "afternoon" && toSession === "forenoon") {
-//                 leaveDays = 0.5;
-//               } else {
-//                 throw new Error("Invalid duration combination for same-day leave");
-//               }
-//             } else {
-//              const fixedHolidays = [
-//   new Date(2025, 0, 26),
-//   new Date(2025, 2, 14),
-//   new Date(2025, 7, 15),
-//   new Date(2025, 9, 2),
-//   new Date(2025, 9, 21),
-//   new Date(2025, 9, 22),
-//   new Date(2025, 10, 5),
-// ];
-
-// const isHoliday = (date) =>
-//   date.getDay() === 0 ||  // Sunday
-//   fixedHolidays.some((holiday) => holiday.toDateString() === date.toDateString());
-
-// let leaveDays = 0;
-// let current = new Date(leaveStart);
-// current.setHours(0, 0, 0, 0);
-// let end = new Date(leaveEnd);
-// end.setHours(0, 0, 0, 0);
-
-// while (current <= end) {
-//   const isFromDate = current.toISOString().split("T")[0] === leaveStart.toISOString().split("T")[0];
-//   const isToDate = current.toISOString().split("T")[0] === leaveEnd.toISOString().split("T")[0];
-
-//   if (!isHoliday(current)) {
-//     if (isFromDate && fromDuration === "half") {
-//       leaveDays += 0.5;
-//     } else if (isToDate && toDuration === "half") {
-//       leaveDays += 0.5;
-//     } else if (!(isFromDate && fromDuration === "half") && !(isToDate && toDuration === "half")) {
-//       leaveDays += 1;
-//     }
+//   if (leaveStart.toISOString().split("T")[0] === leaveEnd.toISOString().split("T")[0]) {
+//   if (fromDuration === "full" && (toDuration === "full" || !toDuration)) {
+//     leaveDays = 1;
+//   } else if (
+//     fromDuration === "half" &&
+//     (!toDuration || toDuration === "half") &&
+//     (!toSession || toSession === "forenoon")
+//   ) {
+//     leaveDays = 0.5;
+//   } else if (
+//     fromDuration === "half" &&
+//     toDuration === "full"
+//   ) {
+//     leaveDays = 1; // Allow half to full on same day (if your policy permits it)
+//   } else {
+//     throw new Error("Invalid duration combination for same-day leave");
 //   }
-
-//   current.setDate(current.getDate() + 1);
 // }
 
-
+// else {
+//               let daysDiff = 0;
+//               let current = new Date(leaveStart);
+//               while (current <= leaveEnd) {
+//                 if (segment.leaveType !== "Casual" || !isHoliday(current)) {
+//                   daysDiff += 1;
+//                 }
+//                 current.setDate(current.getDate() + 1);
+//               }
+//               leaveDays = daysDiff;
+//               if (fromDuration === "half") leaveDays -= 0.5;
+//               if (toDuration === "half") leaveDays -= 0.5;
 //             }
 //           }
 
@@ -236,8 +669,10 @@ const router = express.Router();
 //           if (!chargeGivenToEmployee) {
 //             throw new Error("Selected employee for Charge Given To not found");
 //           }
-//           const startDateOnly = new Date(leaveStart.setHours(0, 0, 0, 0));
-//           const endDateOnly = new Date(leaveEnd.setHours(0, 0, 0, 0));
+//           const startDateOnly = new Date(leaveStart);
+//           startDateOnly.setUTCHours(0, 0, 0, 0);
+//           const endDateOnly = segment.fullDay.to ? new Date(leaveEnd) : new Date(leaveStart);
+//           endDateOnly.setUTCHours(0, 0, 0, 0);
 //           const overlappingLeaves = await Leave.find({
 //             $or: [
 //               {
@@ -350,15 +785,15 @@ const router = express.Router();
 //           const leave = new Leave({
 //             employee: user._id,
 //             employeeId: user.employeeId,
-//   name: user.name,
-//   designation: user.designation,
-//   department: user.department,
+//             name: user.name,
+//             designation: user.designation,
+//             department: user.department,
 //             leaveType: segment.leaveType,
 //             fullDay: {
-//               from: leaveStart,
+//               from: new Date(segment.fullDay.from), // Use normalized date directly
 //               fromDuration,
 //               fromSession,
-//               to: segment.fullDay.to ? leaveEnd : undefined,
+//               to: segment.fullDay.to ? new Date(segment.fullDay.to) : undefined, // Use normalized date directly
 //               toDuration: segment.fullDay.to ? toDuration : undefined,
 //               toSession: segment.fullDay.to ? toSession : undefined,
 //             },
@@ -383,7 +818,7 @@ const router = express.Router();
 //           if (segment.compensatoryEntryId) {
 //             leave.compensatoryEntry = segment.compensatoryEntryId;
 //           }
-//           if (segment.restrictedHoliday) {
+//           if (segment.restrictedHoliday && segment.leaveType === "Restricted Holidays") {
 //             leave.restrictedHoliday = segment.restrictedHoliday;
 //           }
 
@@ -407,11 +842,10 @@ const router = express.Router();
 //           if (leaveType === "Emergency") {
 //             await Employee.findByIdAndUpdate(user._id, { canApplyEmergencyLeave: false });
 //           }
-//       } catch (error) {
-//   console.log(`Segment ${index} failed:`, error.message, segment); // 👈 log this!
-//   errors.push({ segmentIndex: index, message: error.message });
-// }
-
+//         } catch (error) {
+//           console.log(`Segment ${index} failed:`, error.message, segment);
+//           errors.push({ segmentIndex: index, message: error.message });
+//         }
 //       }
 
 //       if (errors.length > 0) {
@@ -425,440 +859,6 @@ const router = express.Router();
 //     }
 //   }
 // );
-
-
-router.post(
-  "/",
-  auth,
-  role(["Employee", "HOD", "Admin"]),
-  upload.any(),
-  async (req, res) => {
-    try {
-      const user = await Employee.findById(req.user.id);
-      if (!user) return res.status(404).json({ message: "Employee not found" });
-      if (!user.designation) return res.status(400).json({ message: "Employee designation is required" });
-      if (!user.department) return res.status(400).json({ message: "Employee department is required" });
-
-      const today = new Date();
-      today.setUTCHours(0, 0, 0, 0);
-      const sevenDaysAgo = new Date(today);
-      sevenDaysAgo.setDate(today.getDate() - 7);
-      const sevenDaysFuture = new Date(today);
-      sevenDaysFuture.setDate(today.getDate() + 7);
-
-      // Debug: Log raw req.body and req.files
-      console.log("Raw req.body:", req.body);
-      console.log("Raw req.files:", req.files);
-
-      const parseSegments = (formData, files) => {
-        console.log("parseSegments input formData:", formData);
-        console.log("parseSegments input files:", files);
-        if (!Array.isArray(formData.segments)) {
-          console.log("No segments array found in formData");
-          return [];
-        }
-
-        const segments = formData.segments.map((segment, index) => {
-          console.log(`Processing segment ${index}:`, segment);
-          const fromDuration = segment.fullDay?.fromDuration || "full";
-          const toDuration = segment.fullDay?.to ? (segment.fullDay?.toDuration || "full") : "";
-
-          // Normalize from date to midnight UTC
-          let fromDate = segment.fullDay?.from ? new Date(segment.fullDay.from) : null;
-          if (fromDate && !isNaN(fromDate.getTime())) {
-            fromDate.setUTCHours(0, 0, 0, 0); // Set to midnight UTC
-          } else {
-            fromDate = null;
-          }
-
-          // Normalize to date to midnight UTC (if provided)
-          let toDate = segment.fullDay?.to ? new Date(segment.fullDay.to) : null;
-          if (toDate && !isNaN(toDate.getTime())) {
-            toDate.setUTCHours(0, 0, 0, 0); // Set to midnight UTC
-          } else {
-            toDate = null;
-          }
-
-          return {
-            leaveType: segment.leaveType || "",
-            isEmergency: segment.isEmergency === "true" || segment.isEmergency === true,
-            fullDay: {
-              from: fromDate ? fromDate.toISOString() : "",
-              fromDuration,
-              fromSession: fromDuration === "half" ? (segment.fullDay?.fromSession || "forenoon") : null,
-              to: toDate ? toDate.toISOString() : "",
-              toDuration,
-              toSession: toDuration === "half" ? (segment.fullDay?.toSession || "forenoon") : null,
-            },
-            compensatoryEntryId: segment.compensatoryEntryId || "",
-       restrictedHoliday: segment.leaveType === "Restricted Holidays" ? (segment.restrictedHoliday || "") : "",
-
-            projectDetails: segment.projectDetails || "",
-            medicalCertificate: files.find((f) => f.fieldname?.includes(`segments[${index}][medicalCertificate]`)) || null,
-          };
-        });
-
-        console.log("Generated segments:", segments);
-        return segments.filter(Boolean);
-      };
-
-      const leaveSegments = parseSegments(req.body, req.files || []);
-      console.log("Parsed leaveSegments:", leaveSegments);
-
-      if (!leaveSegments.length) {
-        return res.status(400).json({ message: "No leave segments provided" });
-      }
-
-      if (!req.body.reason) return res.status(400).json({ message: "Reason is required" });
-      if (!req.body.chargeGivenTo) return res.status(400).json({ message: "Charge Given To is required" });
-      if (!req.body.emergencyContact) return res.status(400).json({ message: "Emergency Contact is required" });
-
-      let compositeLeaveId = leaveSegments.length > 1 ? await generateNextCompositeLeaveId() : null;
-      if (leaveSegments.length > 1 && !compositeLeaveId) {
-        return res.status(500).json({ message: "Failed to generate composite leave ID" });
-      }
-
-      const todayStr = today.toISOString().split("T")[0];
-      const errors = [];
-      const savedLeaves = [];
-
-      // Define holiday list and isHoliday function
-      const holidayList = [
-        { month: 0, day: 26 }, // Republic Day
-        { month: 2, day: 14 }, // Holi
-        { month: 7, day: 15 }, // Independence Day
-        { month: 9, day: 2 }, // Gandhi Jayanti
-        { month: 9, day: 21 }, // Dussehra
-        { month: 9, day: 22 }, // Diwali
-        { month: 10, day: 5 }, // Christmas
-      ];
-
-      const isHoliday = (date) => {
-        return (
-          holidayList.some((h) => date.getDate() === h.day && date.getMonth() === h.month) ||
-          date.getDay() === 0 // Sunday
-        );
-      };
-
-      for (const [index, segment] of leaveSegments.entries()) {
-        try {
-          if (!segment.leaveType) throw new Error("Leave Type is required");
-          if (!segment.fullDay.from) throw new Error("From date is required");
-          if (!/^\d{4}-\d{2}-\d{2}$/.test(segment.fullDay.from.split("T")[0])) {
-            throw new Error("Invalid from date format (expected YYYY-MM-DD)");
-          }
-          const leaveStart = new Date(segment.fullDay.from);
-          if (isNaN(leaveStart.getTime())) throw new Error("Invalid from date");
-          const fromDuration = segment.fullDay.fromDuration || "full";
-          const fromSession = segment.fullDay.fromSession || "";
-          if (!["full", "half"].includes(fromDuration)) {
-            throw new Error("Invalid fromDuration, must be 'full' or 'half'");
-          }
-          if (fromDuration === "half" && !["forenoon", "afternoon"].includes(fromSession)) {
-            throw new Error("Invalid fromSession, must be 'forenoon' or 'afternoon'");
-          }
-          if (fromDuration === "half" && !fromSession) {
-            throw new Error("fromSession is required for half-day fromDuration");
-          }
-
-          let leaveEnd = leaveStart;
-          let toDuration = "";
-          let toSession = "";
-          let leaveDays = fromDuration === "half" ? 0.5 : 1;
-
-          if (segment.fullDay.to) {
-            if (!/^\d{4}-\d{2}-\d{2}$/.test(segment.fullDay.to.split("T")[0])) {
-              throw new Error("Invalid to date format (expected YYYY-MM-DD)");
-            }
-            leaveEnd = new Date(segment.fullDay.to);
-            if (isNaN(leaveEnd.getTime())) throw new Error("Invalid to date");
-            toDuration = segment.fullDay.toDuration || "full";
-            toSession = segment.fullDay.toSession || "";
-            if (!["full", "half"].includes(toDuration)) {
-              throw new Error("Invalid toDuration, must be 'full' or 'half'");
-            }
-            if (toDuration === "half" && toSession !== "forenoon") {
-              throw new Error("toSession must be 'forenoon' for half-day toDuration");
-            }
-            if (toDuration === "half" && !toSession) {
-              throw new Error("toSession is required for half-day toDuration");
-            }
-  if (leaveStart.toISOString().split("T")[0] === leaveEnd.toISOString().split("T")[0]) {
-  if (fromDuration === "full" && (toDuration === "full" || !toDuration)) {
-    leaveDays = 1;
-  } else if (
-    fromDuration === "half" &&
-    (!toDuration || toDuration === "half") &&
-    (!toSession || toSession === "forenoon")
-  ) {
-    leaveDays = 0.5;
-  } else if (
-    fromDuration === "half" &&
-    toDuration === "full"
-  ) {
-    leaveDays = 1; // Allow half to full on same day (if your policy permits it)
-  } else {
-    throw new Error("Invalid duration combination for same-day leave");
-  }
-}
-
-else {
-              let daysDiff = 0;
-              let current = new Date(leaveStart);
-              while (current <= leaveEnd) {
-                if (segment.leaveType !== "Casual" || !isHoliday(current)) {
-                  daysDiff += 1;
-                }
-                current.setDate(current.getDate() + 1);
-              }
-              leaveDays = daysDiff;
-              if (fromDuration === "half") leaveDays -= 0.5;
-              if (toDuration === "half") leaveDays -= 0.5;
-            }
-          }
-
-          if (leaveStart > leaveEnd) {
-            throw new Error("Leave start date cannot be after end date");
-          }
-
-          if (segment.isEmergency && fromDuration === "full" && leaveStart.toISOString().split("T")[0] !== todayStr) {
-            throw new Error("Full-day Emergency leave must be for the current date only");
-          }
-          if (!segment.isEmergency && leaveStart <= today) {
-            throw new Error("From date must be after today for non-Emergency leave");
-          }
-
-          if (segment.leaveType === "Medical") {
-            if (leaveStart < sevenDaysAgo || leaveStart > sevenDaysFuture) {
-              throw new Error("Medical leave from date must be within 7 days prior and 7 days future from today");
-            }
-            if (!segment.fullDay.to) {
-              throw new Error("To date is required for Medical leave");
-            }
-          }
-
-          if (!segment.isEmergency) {
-            const overlappingChargeAssignments = await Leave.find({
-              chargeGivenTo: user._id,
-              $or: [
-                {
-                  "fullDay.from": { $lte: leaveEnd },
-                  "fullDay.to": { $gte: leaveStart },
-                  $and: [
-                    { "status.hod": { $ne: "Rejected" } },
-                    { "status.ceo": { $ne: "Rejected" } },
-                    { "status.admin": { $in: ["Pending", "Acknowledged"] } },
-                  ],
-                },
-              ],
-            });
-            if (overlappingChargeAssignments.length > 0) {
-              const leaveDetails = overlappingChargeAssignments[0];
-              const dateRangeStr = `from ${new Date(leaveDetails.fullDay.from).toISOString().split("T")[0]}${
-                leaveDetails.fullDay.fromDuration === "half" ? ` (${leaveDetails.fullDay.fromSession})` : ""
-              }${leaveDetails.fullDay.to ? ` to ${new Date(leaveDetails.fullDay.to).toISOString().split("T")[0]}${
-                leaveDetails.fullDay.toDuration === "half" ? ` (${leaveDetails.fullDay.toSession})` : ""
-              }` : ""}`;
-              throw new Error(
-                `You are assigned as Charge Given To for a leave ${dateRangeStr} and cannot apply for non-Emergency leaves during this period.`
-              );
-            }
-          }
-
-          const chargeGivenToEmployee = await Employee.findById(req.body.chargeGivenTo);
-          if (!chargeGivenToEmployee) {
-            throw new Error("Selected employee for Charge Given To not found");
-          }
-          const startDateOnly = new Date(leaveStart);
-          startDateOnly.setUTCHours(0, 0, 0, 0);
-          const endDateOnly = segment.fullDay.to ? new Date(leaveEnd) : new Date(leaveStart);
-          endDateOnly.setUTCHours(0, 0, 0, 0);
-          const overlappingLeaves = await Leave.find({
-            $or: [
-              {
-                chargeGivenTo: req.body.chargeGivenTo,
-                $or: [
-                  {
-                    "fullDay.from": { $lte: leaveEnd },
-                    "fullDay.to": { $gte: leaveStart },
-                    $and: [
-                      { "status.hod": { $in: ["Pending", "Approved"] } },
-                      { "status.ceo": { $in: ["Pending", "Approved"] } },
-                      { "status.admin": { $in: ["Pending", "Acknowledged"] } },
-                    ],
-                  },
-                ],
-              },
-              {
-                employee: req.body.chargeGivenTo,
-                $or: [
-                  {
-                    "fullDay.from": { $lte: leaveEnd },
-                    "fullDay.to": { $gte: leaveStart },
-                    $and: [
-                      { "status.hod": { $in: ["Pending", "Approved"] } },
-                      { "status.ceo": { $in: ["Pending", "Approved"] } },
-                      { "status.admin": { $in: ["Pending", "Acknowledged"] } },
-                    ],
-                  },
-                ],
-              },
-            ],
-          });
-          if (overlappingLeaves.length > 0) {
-            throw new Error(
-              "Selected employee is either already assigned as Charge Given To or has a pending/approved leave for the specified date range"
-            );
-          }
-
-          const leaveType = segment.leaveType;
-          const isConfirmed = user.employeeType === "Confirmed";
-          const joinDate = new Date(user.dateOfJoining);
-          const yearsOfService = (new Date() - joinDate) / (1000 * 60 * 60 * 24 * 365);
-
-          switch (leaveType) {
-            case "Casual":
-              const canTakeCasualLeave = await user.checkConsecutivePaidLeaves(leaveStart, leaveEnd);
-              if (!canTakeCasualLeave) {
-                throw new Error("Cannot take more than 3 consecutive paid leave days.");
-              }
-              if (user.paidLeaves < leaveDays) {
-                throw new Error("Insufficient Casual leave balance.");
-              }
-              break;
-            case "Medical":
-              if (!isConfirmed) throw new Error("Medical leave is only for confirmed employees.");
-              if (![3, 4, 7].includes(leaveDays)) throw new Error("Medical leave must be exactly 3, 4, or 7 days.");
-              if (user.medicalLeaves < leaveDays) throw new Error("Insufficient Medical leave balance.");
-              const medicalLeavesThisYear = await Leave.find({
-                employeeId: user.employeeId,
-                leaveType: "Medical",
-                "status.admin": "Acknowledged",
-                "fullDay.from": { $gte: new Date(today.getFullYear(), 0, 1) },
-              });
-              if (medicalLeavesThisYear.length > 0) {
-                throw new Error("Medical leave can only be used once per year.");
-              }
-              break;
-            case "Maternity":
-              if (!isConfirmed || user.gender?.trim().toLowerCase() !== "female") {
-                throw new Error("Maternity leave is only for confirmed female employees.");
-              }
-              if (yearsOfService < 1) throw new Error("Must have completed one year of service.");
-              if (leaveDays !== 90) throw new Error("Maternity leave must be exactly 90 days.");
-              break;
-            case "Paternity":
-              if (!isConfirmed || user.gender?.trim().toLowerCase() !== "male") {
-                throw new Error("Paternity leave is only for confirmed male employees.");
-              }
-              if (yearsOfService < 1) throw new Error("Must have completed one year of service.");
-              if (leaveDays !== 7) throw new Error("Paternity leave must be exactly 7 days.");
-              break;
-            case "Compensatory":
-              const compensatoryEntry = await CompensatoryLeave.findById(segment.compensatoryEntryId);
-              if (!compensatoryEntry || compensatoryEntry.employeeId.toString() !== user._id.toString() || compensatoryEntry.status !== "Available") {
-                throw new Error("Invalid or unavailable compensatory leave entry.");
-              }
-              const hoursNeeded = fromDuration === "half" ? 4 : 8;
-              if (compensatoryEntry.hours !== hoursNeeded) {
-                throw new Error(
-                  `Compensatory entry (${compensatoryEntry.hours} hours) does not match leave duration (${fromDuration === "half" ? "4 hours" : "8 hours"})`
-                );
-              }
-              break;
-            case "Restricted Holidays":
-              if (!isConfirmed) throw new Error("Restricted Holidays are only for confirmed employees.");
-              if (user.restrictedHolidays <= 0) throw new Error("No restricted holidays available this year.");
-              if (leaveDays !== 1) throw new Error("Restricted Holiday must be exactly 1 day.");
-              break;
-            case "Leave Without Pay(LWP)":
-              if (leaveDays > 30) throw new Error("Leave Without Pay cannot exceed 30 days.");
-              break;
-            case "Emergency":
-              if (!segment.isEmergency) throw new Error("Emergency leave must have isEmergency set to true.");
-              if (leaveDays > 1) throw new Error("Emergency leave can only be half day or one full day.");
-              break;
-            default:
-              throw new Error("Invalid leave type specified.");
-          }
-
-          const leave = new Leave({
-            employee: user._id,
-            employeeId: user.employeeId,
-            name: user.name,
-            designation: user.designation,
-            department: user.department,
-            leaveType: segment.leaveType,
-            fullDay: {
-              from: new Date(segment.fullDay.from), // Use normalized date directly
-              fromDuration,
-              fromSession,
-              to: segment.fullDay.to ? new Date(segment.fullDay.to) : undefined, // Use normalized date directly
-              toDuration: segment.fullDay.to ? toDuration : undefined,
-              toSession: segment.fullDay.to ? toSession : undefined,
-            },
-            reason: req.body.reason,
-            chargeGivenTo: req.body.chargeGivenTo,
-            emergencyContact: req.body.emergencyContact,
-            projectDetails: segment.projectDetails || "",
-            compositeLeaveId,
-            status: {
-              hod: "Pending",
-              ceo: "Pending",
-              admin: "Pending",
-            },
-          });
-
-          if (segment.medicalCertificate) {
-            leave.medicalCertificate = {
-              data: segment.medicalCertificate.buffer,
-              contentType: segment.medicalCertificate.mimetype,
-            };
-          }
-          if (segment.compensatoryEntryId) {
-            leave.compensatoryEntry = segment.compensatoryEntryId;
-          }
-          if (segment.restrictedHoliday && segment.leaveType === "Restricted Holidays") {
-            leave.restrictedHoliday = segment.restrictedHoliday;
-          }
-
-          const savedLeave = await leave.save();
-          savedLeaves.push(savedLeave);
-
-          if (leaveType === "Compensatory" && compensatoryEntry) {
-            compensatoryEntry.status = "Used";
-            await compensatoryEntry.save();
-          } else if (leaveType === "Medical") {
-            user.medicalLeaves -= leaveDays;
-            await user.save();
-          } else if (leaveType === "Casual") {
-            user.paidLeaves -= leaveDays;
-            await user.save();
-          } else if (leaveType === "Restricted Holidays") {
-            user.restrictedHolidays -= 1;
-            await user.save();
-          }
-
-          if (leaveType === "Emergency") {
-            await Employee.findByIdAndUpdate(user._id, { canApplyEmergencyLeave: false });
-          }
-        } catch (error) {
-          console.log(`Segment ${index} failed:`, error.message, segment);
-          errors.push({ segmentIndex: index, message: error.message });
-        }
-      }
-
-      if (errors.length > 0) {
-        return res.status(400).json({ message: "Partial success", errors });
-      }
-
-      res.status(201).json({ message: "Leave request submitted successfully", data: savedLeaves });
-    } catch (error) {
-      console.error("Leave submission error:", error);
-      res.status(500).json({ message: "Server error", error: error.message });
-    }
-  }
-);
 
 router.get('/next-composite-id', auth, async (req, res) => {
   try {

@@ -80,9 +80,11 @@ function Attendance() {
   }, []);
 
 const formatDateDisplay = (dateStr) => {
+  // Parse the input date as UTC
   const dateUTC = new Date(dateStr);
-  dateUTC.setDate(dateUTC.getDate() + 1); // Add one day to correct DB offset
-  const dateIST = new Date(dateUTC.getTime() + 5.5 * 60 * 60 * 1000); // Convert to IST
+  // Convert to IST by adding 5.5 hours (5.5 * 60 * 60 * 1000 milliseconds)
+  const dateIST = new Date(dateUTC.getTime() + 5.5 * 60 * 60 * 1000);
+  // Format as DD/MM/YYYY
   return dateIST.toLocaleDateString("en-GB", {
     day: "2-digit",
     month: "2-digit",
@@ -339,19 +341,22 @@ const isLateArrivalEligible = (timeIn, logDate) => {
   const [hours, mins] = timeIn.split(":").map(Number);
   const totalMins = hours * 60 + mins;
 
+  // Current time in IST
   const now = new Date();
   const currentIST = new Date(now.getTime() + 5.5 * 60 * 60 * 1000);
-  const logDateObj = new Date(logDate);
-  logDateObj.setDate(logDateObj.getDate() + 1); // Correct DB offset to IST
 
-  const isSameDay =
-    currentIST.toISOString().split("T")[0] ===
-    logDateObj.toISOString().split("T")[0];
+  // Parse logDate as UTC and convert to IST
+  const logDateUTC = new Date(logDate);
+  const logDateIST = new Date(logDateUTC.getTime() + 5.5 * 60 * 60 * 1000);
 
-  return (
-    isSameDay &&
-    totalMins >= 540 && totalMins <= 555 // 09:00–09:15
-  );
+  // Check if logDate is within the last 24 hours from current IST time
+  const timeDiff = currentIST.getTime() - logDateIST.getTime();
+  const within24Hours = timeDiff >= 0 && timeDiff <= 24 * 60 * 60 * 1000;
+
+  // Check if timeIn is between 09:00 and 09:15
+  const isLate = totalMins >= 540 && totalMins <= 555; // 09:00–09:15
+
+  return within24Hours && isLate;
 };
 
 
@@ -839,18 +844,18 @@ const isLateArrivalEligible = (timeIn, logDate) => {
                             </Button>
                           </TableCell>
                         )}
-                   {["Employee", "HOD"].includes(user?.loginType) &&
+{["Employee", "HOD"].includes(user?.loginType) &&
   a.employeeId === user.employeeId &&
   isLateArrivalEligible(a.timeIn, a.logDate) &&
   (a.status?.includes("Late Arrival") || a.status?.includes("(LA)")) &&
   !a.status?.includes("Approval Pending") &&
   !a.status?.includes("Allowed") &&
-  !a.status?.includes("Denied") && (
+  !a.status?.includes("Denied") &&
+  (apologyCounts[a.employeeId]?.count || 0) < 3 && (
     <TableCell>
       <Button
         onClick={() => handleApologizeClick(a)}
         className="bg-yellow-500 hover:bg-yellow-600 text-white"
-        disabled={(apologyCounts[a.employeeId]?.count || 0) >= 3}
       >
         Apologize
       </Button>

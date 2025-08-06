@@ -19,13 +19,13 @@ import ContentLayout from "./ContentLayout";
 import { toast } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
 import "../App.css";
+import dayjs from "dayjs";
 
 function LeaveForm() {
   const { user } = useContext(AuthContext);
   const getToday = () => dayjs().startOf("day");
-const getSevenDaysAgo = () => getToday().subtract(7, "day");
-const getSevenDaysLater = (fromDate) => dayjs(fromDate).add(7, "day");
-
+  const getSevenDaysAgo = () => getToday().subtract(7, "day");
+  const getSevenDaysLater = (fromDate) => dayjs(fromDate).add(7, "day");
 
   const istOffset = 5.5 * 60 * 60 * 1000;
   const today = new Date();
@@ -33,10 +33,10 @@ const getSevenDaysLater = (fromDate) => dayjs(fromDate).add(7, "day");
   istTime.setUTCHours(0, 0, 0, 0);
 
   const minDate = new Date(istTime);
-  minDate.setDate(minDate.getDate() + 1);
   const minDateMedical = new Date(istTime);
+  minDateMedical.setDate(minDateMedical.getDate() - 7);
   const maxDateBase = new Date(istTime);
-  maxDateBase.setDate(istTime.getDate() + 60); // 60-day window
+  maxDateBase.setDate(istTime.getDate() + 60);
 
   const [commonFields, setCommonFields] = useState({
     reason: "",
@@ -56,6 +56,7 @@ const getSevenDaysLater = (fromDate) => dayjs(fromDate).add(7, "day");
     medicalLeaves: 0,
     restrictedHolidays: 0,
   });
+  const [initialLeaveBalances, setInitialLeaveBalances] = useState(null);
   const [leaveSegments, setLeaveSegments] = useState([
     {
       leaveType: "",
@@ -76,7 +77,16 @@ const getSevenDaysLater = (fromDate) => dayjs(fromDate).add(7, "day");
   ]);
   const [showLeaveRules, setShowLeaveRules] = useState(false);
   const [validationErrors, setValidationErrors] = useState([]);
-  
+  const [isAfter7AM, setIsAfter7AM] = useState(false);
+  const [showRHList, setShowRHList] = useState({});
+  const [isFormFilled, setIsFormFilled] = useState(false);
+
+  const RH_OPTIONS = [
+    { value: "2025-08-09", label: "Raksha Bandhan — 09/08/2025" },
+    { value: "2025-08-16", label: "Janmashtami — 16/08/2025" },
+    { value: "2025-10-09", label: "Karva Chauth — 09/10/2025" },
+    { value: "2025-12-25", label: "Christmas — 25/12/2025" },
+  ];
 
   useEffect(() => {
     const fetchEmployeeData = async () => {
@@ -85,13 +95,17 @@ const getSevenDaysLater = (fromDate) => dayjs(fromDate).add(7, "day");
         setCompensatoryBalance(res.data.compensatoryLeaves || 0);
         setCompensatoryEntries(res.data.compensatoryAvailable || []);
         setCanApplyEmergencyLeave(res.data.canApplyEmergencyLeave || false);
-        setLeaveBalances({
+        const balances = {
           compensatoryAvailable: res.data.compensatoryLeaves || 0,
           paidLeaves: res.data.paidLeaves || 0,
           unpaidLeavesTaken: res.data.unpaidLeavesTaken || 0,
           medicalLeaves: res.data.medicalLeaves || 0,
           restrictedHolidays: res.data.restrictedHolidays || 0,
-        });
+        };
+        setLeaveBalances(balances);
+        if (!initialLeaveBalances) {
+          setInitialLeaveBalances(balances);
+        }
       } catch (err) {
         toast.error("Failed to fetch employee data");
       }
@@ -130,15 +144,40 @@ const getSevenDaysLater = (fromDate) => dayjs(fromDate).add(7, "day");
       }
     };
 
+    const checkTimeRestriction = () => {
+      const now = new Date();
+      const istNow = new Date(now.getTime() + istOffset);
+      const hours = istNow.getUTCHours();
+      const minutes = istNow.getUTCMinutes();
+      const isAfter = hours > 7 || (hours === 7 && minutes > 0);
+      setIsAfter7AM(isAfter);
+    };
+
     fetchEmployeeData();
     fetchRestrictedHolidays();
     fetchDepartmentEmployees();
-  }, [leaveSegments]);
+    checkTimeRestriction();
+  }, []);
+
+  useEffect(() => {
+    const isFilled = leaveSegments.every(
+      (segment) =>
+        segment.leaveType &&
+        segment.dates.from &&
+        (segment.dates.fromDuration !== "half" || segment.dates.fromSession) &&
+        (!segment.dates.to || (segment.dates.toDuration !== "half" || segment.dates.toSession)) &&
+        commonFields.reason &&
+        commonFields.chargeGivenTo &&
+        commonFields.emergencyContact
+    );
+    setIsFormFilled(isFilled);
+  }, [leaveSegments, commonFields]);
 
 const handleSegmentChange = (index, e) => {
   const { name, value } = e.target;
   setLeaveSegments((prev) => {
     const newSegments = [...prev];
+    
     if (name === `fromDuration-${index}`) {
       newSegments[index] = {
         ...newSegments[index],
@@ -146,6 +185,9 @@ const handleSegmentChange = (index, e) => {
           ...newSegments[index].dates,
           fromDuration: value,
           fromSession: value === "half" ? newSegments[index].dates.fromSession || "forenoon" : "",
+          to: value === "half" ? newSegments[index].dates.from : newSegments[index].dates.to,
+          toDuration: value === "half" ? "half" : newSegments[index].dates.toDuration,
+          toSession: value === "half" ? "forenoon" : newSegments[index].dates.toSession,
         },
       };
     } else if (name === `fromSession-${index}`) {
@@ -154,6 +196,9 @@ const handleSegmentChange = (index, e) => {
         dates: {
           ...newSegments[index].dates,
           fromSession: value,
+          to: value === "forenoon" && newSegments[index].dates.fromDuration === "half" ? newSegments[index].dates.from : newSegments[index].dates.to,
+          toDuration: value === "forenoon" && newSegments[index].dates.fromDuration === "half" ? "half" : newSegments[index].dates.toDuration,
+          toSession: value === "forenoon" && newSegments[index].dates.fromDuration === "half" ? "forenoon" : newSegments[index].dates.toSession,
         },
       };
     } else if (name === `toDuration-${index}`) {
@@ -170,51 +215,36 @@ const handleSegmentChange = (index, e) => {
         ...newSegments[index],
         dates: { ...newSegments[index].dates, toSession: value },
       };
-} else if (name === `to-${index}`) {
-  const toDate = new Date(e.target.value);
-  const leaveType = newSegments[index].leaveType;
-
-  // Step 1: Temporarily simulate full-day to-date
-  newSegments[index].dates.to = e.target.value;
-  newSegments[index].dates.toDuration = "full";
-  newSegments[index].dates.toSession = "";
-
-  // Step 2: Calculate leave using updated newSegments
-  const simulatedDays = newSegments.reduce(
-    (sum, seg) => sum + calculateLeaveDays(seg),
-    0
-  );
-
-  const forceHalfDay = leaveType !== "Medical" && simulatedDays > 3;
-
-  // Step 3: Apply forced half day if needed
-  if (forceHalfDay) {
-    newSegments[index].dates.toDuration = "half";
-    newSegments[index].dates.toSession = "forenoon";
-  }
-
-  console.log("Projected Leave Days:", simulatedDays, "| Forced Half Day?", forceHalfDay);
-}
-
-
-
-
-
-
- else if (name.includes("dates")) {
+    } else if (name === `to-${index}`) {
+      const toDate = new Date(value);
+      newSegments[index].dates.to = value;
+      newSegments[index].dates.toDuration = "full";
+      newSegments[index].dates.toSession = "";
+    } else if (name.includes("dates")) {
       const field = name.split(".")[1];
       newSegments[index] = {
         ...newSegments[index],
         dates: {
           ...newSegments[index].dates,
           [field]: value,
-          ...(field === "from" && { to: value }),
+          ...(field === "from" && newSegments[index].leaveType === "Medical" && {
+            to: new Date(new Date(value).getTime() + 6 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]
+          }),
+          ...(field === "from" && newSegments[index].leaveType === "Maternity" && {
+            to: new Date(new Date(value).getTime() + 89 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]
+          }),
+          ...(field === "from" && newSegments[index].leaveType === "Paternity" && {
+            to: new Date(new Date(value).getTime() + 6 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]
+          }),
           ...(field === "from" && newSegments[index].leaveType === "Restricted Holidays" && { to: value }),
+          ...(field === "from" && newSegments[index].dates.fromDuration === "half" && newSegments[index].dates.fromSession === "forenoon" && {
+            to: value
+          }),
         },
       };
     } else if (name === "medicalCertificate") {
       const file = e.target.files[0];
-      if (file && file.size > 5 * 1024 * 1024) {
+      if (file && file.size > 5 * 1024 * 60 * 1024) {
         toast.error("File size exceeds 5MB limit");
         e.target.value = null;
         return prev;
@@ -245,9 +275,17 @@ const handleSegmentChange = (index, e) => {
     } else {
       newSegments[index] = { ...newSegments[index], [name]: value };
     }
+
+    // Real-time validation and recalculation
+    const error = validateSegment(newSegments[index], index);
+    if (error) {
+      setValidationErrors((prev) => [...prev.filter((e) => !e.includes(`Segment ${index + 1}`)), error]);
+      toast.error(error);
+    } else {
+      setValidationErrors((prev) => prev.filter((e) => !e.includes(`Segment ${index + 1}`)));
+    }
     return newSegments;
   });
-  setValidationErrors([]);
 };
 
   const handleCommonFieldChange = (e) => {
@@ -280,84 +318,62 @@ const handleSegmentChange = (index, e) => {
   };
 
   const addLeaveSegment = () => {
-    if (getTotalLeaveDays() >= 3) {
-      toast.error("Maximum of 3 leave days reached. Contact your HOD for additional leave approval.");
-      return;
+  const totalConsecutiveDays = getTotalConsecutiveDays();
+  if (totalConsecutiveDays >= 3) {
+    toast.error("Cannot exceed 3 consecutive days, including Sundays and Yearly Holidays.");
+    return;
+  }
+
+  // Check for Thu-Fri-Sat and Mon-Tue-Wed combination before adding
+  let allFromDates = leaveSegments.map((seg) => seg.dates.from && new Date(seg.dates.from));
+  let allToDates = leaveSegments.map((seg) => seg.dates.to && new Date(seg.dates.to)).filter(Boolean);
+  if (leaveSegments.some((seg) => !seg.dates.to && seg.dates.from)) {
+    allToDates = allToDates.concat(leaveSegments.map((seg) => seg.dates.from && new Date(seg.dates.from)).filter(Boolean));
+  }
+  const minDate = new Date(Math.min.apply(null, allFromDates.filter(Boolean)));
+  const maxDate = new Date(Math.max.apply(null, allToDates));
+  const daysDiff = Math.floor((maxDate - minDate) / (1000 * 60 * 60 * 24)) + 1;
+
+if (daysDiff >= 3 && hasInvalidWeekdayStretch(minDate, maxDate)) {
+  toast.error("Cannot take leave for 3 consecutive weekdays in Mon–Wed or Thu–Sat block.");
+  return;
+}
+
+
+  setLeaveSegments((prev) => {
+    const lastSegment = prev[prev.length - 1];
+    let nextFromDate = "";
+    if (lastSegment?.dates?.to) {
+      let toDate = new Date(lastSegment.dates.to);
+      toDate.setDate(toDate.getDate() + 1);
+      nextFromDate = toDate.toISOString().split("T")[0];
     }
-    setLeaveSegments((prev) => {
-      const lastSegment = prev[prev.length - 1];
-      let nextFromDate = "";
-      if (lastSegment?.dates?.to) {
-        let toDate = new Date(lastSegment.dates.to);
-        do {
-          toDate.setDate(toDate.getDate() + 1);
-        } while (isHoliday(toDate) && !isRestrictedHoliday(toDate));
-        nextFromDate = toDate.toISOString().split("T")[0];
-      }
-      return [
-        ...prev,
-        {
-          leaveType: "",
-          isEmergency: false,
-          dates: {
-            from: nextFromDate,
-            to: nextFromDate,
-            fromDuration: "full",
-            fromSession: "",
-            toDuration: "full",
-            toSession: "",
-          },
-          compensatoryEntryId: "",
-          restrictedHoliday: restrictedHolidays.length > 0 ? restrictedHolidays[0].value : "",
-          projectDetails: "",
-          medicalCertificate: null,
+    return [
+      ...prev,
+      {
+        leaveType: "",
+        isEmergency: false,
+        dates: {
+          from: nextFromDate,
+          to: nextFromDate,
+          fromDuration: "full",
+          fromSession: "",
+          toDuration: "full",
+          toSession: "",
         },
-      ];
-    });
-  };
+        compensatoryEntryId: "",
+        restrictedHoliday: restrictedHolidays.length > 0 ? restrictedHolidays[0].value : "",
+        projectDetails: "",
+        medicalCertificate: null,
+      },
+    ];
+  });
+};
 
   const removeLeaveSegment = (index) => {
     setLeaveSegments((prev) => prev.filter((_, i) => i !== index));
     setValidationErrors([]);
   };
-
-const calculateLeaveDays = (segment) => {
-  if (!segment.dates.from) return 0;
-  const fromDate = new Date(segment.dates.from);
-  const toDate = segment.dates.to ? new Date(segment.dates.to) : fromDate;
-  if (toDate < fromDate) return 0;
-
-  let days = 0;
-  let current = new Date(fromDate);
-  while (current <= toDate) {
-    // For Casual Leave, exclude Sundays and yearly holidays
-    if (segment.leaveType === "Casual") {
-      if (!isHoliday(current) || isRestrictedHoliday(current)) {
-        days += 1;
-      }
-    } else {
-      // For other leave types, include restricted holidays but exclude regular holidays
-      if (!isHoliday(current) || isRestrictedHoliday(current)) {
-        days += 1;
-      }
-    }
-    current.setDate(current.getDate() + 1);
-  }
-
-  // Adjust for half-day selections
-  if (segment.dates.fromDuration === "half") days -= 0.5;
-  if (segment.dates.toDuration === "half" && segment.dates.to) days -= 0.5;
-
-  // Ensure 0.5 days for single-day half-day
-  if (
-    fromDate.toDateString() === toDate.toDateString() &&
-    segment.dates.fromDuration === "half"
-  ) {
-    return 0.5;
-  }
-
-  return days > 0 ? days : 0;
-};
 
   const restrictedHolidayDates = [
     new Date(2025, 7, 9),
@@ -366,18 +382,19 @@ const calculateLeaveDays = (segment) => {
     new Date(2025, 11, 25),
   ];
 
+  const yearlyHolidayDates = [
+    new Date(2025, 0, 26),
+    new Date(2025, 2, 14),
+    new Date(2025, 7, 15),
+    new Date(2025, 9, 2),
+    new Date(2025, 9, 21),
+    new Date(2025, 9, 22),
+    new Date(2025, 10, 5),
+  ];
+
   const isHoliday = (date) => {
-    const holidayList = [
-      { month: 0, day: 26 },
-      { month: 2, day: 14 },
-      { month: 7, day: 15 },
-      { month: 9, day: 2 },
-      { month: 9, day: 21 },
-      { month: 9, day: 22 },
-      { month: 10, day: 5 },
-    ];
     return (
-      holidayList.some((h) => date.getDate() === h.day && date.getMonth() === h.month) ||
+      yearlyHolidayDates.some((h) => h.toDateString() === date.toDateString()) ||
       date.getDay() === 0
     );
   };
@@ -386,86 +403,218 @@ const calculateLeaveDays = (segment) => {
     return restrictedHolidayDates.some((rh) => rh.toDateString() === date.toDateString());
   };
 
-  const validateSegment = (segment, index) => {
-    if (!segment.leaveType) return "Leave Type is required";
-    if (!commonFields.reason) return "Reason is required";
-    if (!commonFields.chargeGivenTo) return "Charge Given To is required";
-    if (!commonFields.emergencyContact) return "Emergency Contact is required";
-    if (!segment.dates.from) return "From Date is required";
-    if (segment.dates.to && new Date(segment.dates.to) < new Date(segment.dates.from))
-      return "To Date cannot be earlier than From Date";
-    if (!["full", "half"].includes(segment.dates.fromDuration))
-      return "From Duration must be 'full' or 'half'";
-    if (segment.dates.fromDuration === "half" && !["forenoon", "afternoon"].includes(segment.dates.fromSession))
-      return "From Session must be 'forenoon' or 'afternoon'";
-    if (segment.dates.to && !["full", "half"].includes(segment.dates.toDuration))
-      return "To Duration must be 'full' or 'half'";
-    if (segment.dates.to && segment.dates.toDuration === "half" && segment.dates.toSession !== "forenoon")
-      return "To Session must be 'forenoon' for Half Day To Duration";
-    if (getTotalLeaveDays() > 3)
-      return "Total leave days cannot exceed 3. Contact your HOD for additional leave approval.";
-    if (segment.leaveType !== "Medical" && !segment.isEmergency) {
-      const fromDate = new Date(segment.dates.from);
-      if (fromDate <= istTime) return "From Date must be after today for this leave type";
+const calculateLeaveDays = (segment) => {
+  if (!segment.dates.from) return 0;
+  const fromDate = new Date(segment.dates.from);
+  const toDate = segment.dates.to ? new Date(segment.dates.to) : fromDate;
+  if (toDate < fromDate) return 0;
+
+  if (segment.leaveType === "Medical" || segment.leaveType === "Maternity" || segment.leaveType === "Paternity") {
+    const days = Math.floor((toDate - fromDate) / (1000 * 60 * 60 * 24)) + 1;
+    return days;
+  }
+
+  let days = 0;
+  let current = new Date(fromDate);
+  while (current <= toDate) {
+    if (!isHoliday(current) || isRestrictedHoliday(current)) {
+      days += 1;
     }
-    if (segment.leaveType === "Medical" && segment.dates.fromDuration === "full") {
-      const days = calculateLeaveDays(segment);
-      if (days !== 3 && days !== 4 && days !== 7) return "Medical leave must be exactly 3, 4, or 7 days";
+    current.setDate(current.getDate() + 1);
+  }
+
+  // Adjust for same-day scenario with duration
+  if (fromDate.toDateString() === toDate.toDateString()) {
+    if (segment.dates.fromDuration === "half" && segment.dates.toDuration === "half") {
+      return segment.dates.fromSession === segment.dates.toSession ? 0.5 : 0.5;
     }
-    if (segment.isEmergency) {
-      if (!canApplyEmergencyLeave) return "You are not authorized to apply for Emergency Leave";
-      const leaveDays = calculateLeaveDays(segment);
-      if (leaveDays > 1) return "Emergency leave must be half day or one full day";
-      if (
-        segment.dates.from !== istTime.toISOString().split("T")[0] ||
-        (segment.dates.to && segment.dates.to !== istTime.toISOString().split("T")[0])
-      ) {
-        return "Emergency leave must be for the current date only";
+    return segment.dates.fromDuration === "half" ? 0.5: 1;
+  }
+
+  // Adjust for half-day durations
+  if (segment.dates.fromDuration === "half") days -= 0.5;
+  if (segment.dates.toDuration === "half" && segment.dates.to) days -= 0.5;
+
+  return days > 0 ? days : 0;
+};
+
+  const getTotalConsecutiveDays = () => {
+    if (leaveSegments.length === 0 || !leaveSegments[0].dates.from) return 0;
+    
+    let minDate = null;
+    let maxDate = null;
+
+    leaveSegments.forEach((segment) => {
+      if (segment.dates.from) {
+        const from = new Date(segment.dates.from);
+        if (!minDate || from < minDate) minDate = from;
+        if (segment.dates.to) {
+          const to = new Date(segment.dates.to);
+          if (!maxDate || to > maxDate) maxDate = to;
+        } else if (!maxDate || from > maxDate) {
+          maxDate = from;
+        }
       }
-    }
-    if (segment.leaveType === "Compensatory") {
-      if (!segment.compensatoryEntryId) return "Compensatory leave entry is required";
-      const entry = compensatoryEntries.find((e) => e._id === segment.compensatoryEntryId);
-      if (!entry || entry.status !== "Available") return "Invalid or unavailable compensatory leave entry";
-      const leaveDays = calculateLeaveDays(segment);
-      const hoursNeeded = leaveDays === 0.5 ? 4 : 8;
-      if (entry.hours !== hoursNeeded)
-        return `Selected entry (${entry.hours} hours) does not match leave duration (${leaveDays === 0.5 ? "Half Day (4 hours)" : "Full Day (8 hours)"})`;
-    }
-    if (segment.leaveType === "Restricted Holidays") {
-      if (!segment.restrictedHoliday) return "Please select a restricted holiday";
-      const fromDate = new Date(segment.dates.from);
-      const isValidRHDate = restrictedHolidayDates.some(
-        (rh) => rh.toDateString() === fromDate.toDateString()
-      );
-      if (!isValidRHDate) return "Please select a valid Restricted Holiday date";
-    }
-    if (segment.leaveType === "Casual" && user?.employeeType === "Confirmed") {
-      const leaveDays = calculateLeaveDays(segment);
-      if (leaveDays > 3) return `Segment ${index + 1}: Only 3 CL can be availed in a row`;
-    }
-    if (segment.leaveType === "Medical" && (!user || user.employeeType !== "Confirmed"))
-      return "Medical leave is only available for Confirmed employees";
-    if (segment.leaveType === "Medical" && segment.dates.fromDuration === "half")
-      return "Medical leave cannot be applied as a half-day leave";
-    if (segment.leaveType === "Maternity" && (!user || user.gender?.trim().toLowerCase() !== "female"))
-      return "Maternity leave is only available for female employees";
-    if (segment.leaveType === "Maternity" && (!user || user.employeeType !== "Confirmed"))
-      return "Maternity leave is only available for Confirmed employees";
-    if (segment.leaveType === "Maternity" && segment.dates.fromDuration === "full") {
-      const days = calculateLeaveDays(segment);
-      if (days !== 90) return "Maternity leave must be exactly 90 days";
-    }
-    if (segment.leaveType === "Paternity" && (!user || user.gender?.trim().toLowerCase() !== "male"))
-      return "Paternity leave is only available for male employees";
-    if (segment.leaveType === "Paternity" && (!user || user.employeeType !== "Confirmed"))
-      return "Paternity leave is only available for Confirmed employees";
-    if (segment.leaveType === "Paternity" && segment.dates.fromDuration === "full") {
-      const days = calculateLeaveDays(segment);
-      if (days !== 7) return "Paternity leave must be exactly 7 days";
-    }
-    return null;
+    });
+
+    if (!minDate || !maxDate) return 0;
+
+    const totalDays = Math.floor((maxDate - minDate) / (1000 * 60 * 60 * 24)) + 1;
+    return totalDays;
   };
+
+  const hasInvalidWeekdayStretch = (startDate, endDate) => {
+  let current = new Date(startDate);
+  let weekdaysInRow = [];
+
+  while (current <= endDate) {
+    const day = current.getDay(); // 0=Sun, 1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri, 6=Sat
+
+    if (day >= 1 && day <= 6) {
+      weekdaysInRow.push(day);
+      if (weekdaysInRow.length >= 3) {
+        const seq = weekdaysInRow.slice(-3).sort().join(",");
+        if (seq === "1,2,3" || seq === "4,5,6") {
+          return true; // Found Mon–Tue–Wed OR Thu–Fri–Sat
+        }
+      }
+    } else {
+      weekdaysInRow = []; // reset on Sunday
+    }
+
+    current.setDate(current.getDate() + 1);
+  }
+
+  return false;
+};
+
+
+
+const validateSegment = (segment, index) => {
+  // if (!segment.leaveType) return "Leave Type is required";
+  // if (!commonFields.reason) return "Reason is required";
+  // if (!commonFields.chargeGivenTo) return "Charge Given To is required";
+  // if (!commonFields.emergencyContact) return "Emergency Contact is required";
+  // if (!segment.dates.from) return "From Date is required";
+  // if (segment.dates.to && new Date(segment.dates.to) < new Date(segment.dates.from))
+  //   return "To Date cannot be earlier than From Date";
+  // if (!["full", "half"].includes(segment.dates.fromDuration))
+  //   return "From Duration must be 'full' or 'half'";
+  // if (segment.dates.fromDuration === "half" && !["forenoon", "afternoon"].includes(segment.dates.fromSession))
+  //   return "From Session must be 'forenoon' or 'afternoon'";
+  // if (segment.dates.to && !["full", "half"].includes(segment.dates.toDuration))
+  //   return "To Duration must be 'full' or 'half'";
+  // if (segment.dates.to && segment.dates.toDuration === "half" && segment.dates.toSession !== "forenoon")
+  //   return "To Session must be 'forenoon' for Half Day To Duration";
+
+  // Collect all segment dates for global validation
+  let allFromDates = [];
+  let allToDates = [];
+  leaveSegments.forEach((seg) => {
+    if (seg.dates.from) allFromDates.push(new Date(seg.dates.from));
+    if (seg.dates.to) allToDates.push(new Date(seg.dates.to));
+    if (!seg.dates.to && seg.dates.from) allToDates.push(new Date(seg.dates.from));
+  });
+  const minDate = new Date(Math.min.apply(null, allFromDates));
+  const maxDate = new Date(Math.max.apply(null, allToDates));
+  const daysDiff = Math.floor((maxDate - minDate) / (1000 * 60 * 60 * 24)) + 1;
+
+ if (daysDiff >= 3) {
+  if (hasInvalidWeekdayStretch(minDate, maxDate)) {
+    return "Cannot take leave for 3 consecutive weekdays in Mon–Wed or Thu–Sat block.";
+  }
+}
+
+
+
+  if (segment.leaveType === "Medical") {
+    if (segment.dates.fromDuration === "half") return "Medical leave cannot be applied as a half-day leave";
+    const days = calculateLeaveDays(segment);
+    if (days !== 3 && days !== 4 && days !== 7) return "Medical leave must be exactly 3, 4, or 7 days";
+    if (leaveSegments.some((seg, i) => i !== index && seg.leaveType && seg.leaveType !== "Medical"))
+      return "Medical leave must be applied alone";
+  }
+
+  if (segment.isEmergency) {
+    if (!canApplyEmergencyLeave) return "You are not authorized to apply for Emergency Leave";
+    if (isAfter7AM) return "Emergency Leave applications are only accepted before 7:00 AM IST. Please contact your Head of Department for further assistance.";
+    const leaveDays = calculateLeaveDays(segment);
+    if (leaveDays > 1) return "Emergency leave must be half day or one full day";
+    if (
+      segment.dates.from !== istTime.toISOString().split("T")[0] ||
+      (segment.dates.to && segment.dates.to !== istTime.toISOString().split("T")[0])
+    ) {
+      return "Emergency leave must be for the current date only";
+    }
+  }
+
+  if (segment.leaveType === "Compensatory") {
+    if (!segment.compensatoryEntryId) return "Compensatory leave entry is required";
+    const entry = compensatoryEntries.find((e) => e._id === segment.compensatoryEntryId);
+    if (!entry || entry.status !== "Available") return "Invalid or unavailable compensatory leave entry";
+    const leaveDays = calculateLeaveDays(segment);
+    const hoursNeeded = leaveDays === 0.5 ? 4 : 8;
+    if (entry.hours !== hoursNeeded)
+      return `Selected entry (${entry.hours} hours) does not match leave duration (${leaveDays === 0.5 ? "Half Day (4 hours)" : "Full Day (8 hours)"})`;
+  }
+
+  if (segment.leaveType === "Restricted Holidays") {
+    if (!segment.restrictedHoliday) return "Please select a restricted holiday";
+    const fromDate = new Date(segment.dates.from);
+    const isValidRHDate = restrictedHolidayDates.some(
+      (rh) => rh.toDateString() === fromDate.toDateString()
+    );
+    if (!isValidRHDate) return "Please select a valid Restricted Holiday date";
+    if (
+      leaveSegments.some(
+        (seg, i) => i !== index && seg.leaveType === "Restricted Holidays" && seg.restrictedHoliday
+      )
+    ) {
+      return "Restricted Holiday already selected in another segment";
+    }
+  }
+
+  if (segment.leaveType === "Casual" && !user?.employeeType === "Confirmed") {
+    const leaveDays = calculateLeaveDays(segment);
+    if (leaveDays > 1) return "Non-confirmed employees can only apply for 1 Casual Leave day";
+  }
+
+  if (segment.leaveType === "Medical" && (!user || user.employeeType !== "Confirmed"))
+    return "Medical leave is only available for Confirmed employees";
+
+  if (segment.leaveType === "Maternity" && (!user || user.gender?.trim().toLowerCase() !== "female"))
+    return "Maternity leave is only available for female employees";
+  if (segment.leaveType === "Maternity" && (!user || user.employeeType !== "Confirmed"))
+    return "Maternity leave is only available for Confirmed employees";
+  if (segment.leaveType === "Maternity" && segment.dates.fromDuration === "full") {
+    const days = calculateLeaveDays(segment);
+    if (days !== 90) return "Maternity leave must be exactly 90 days";
+  }
+
+  if (segment.leaveType === "Paternity" && (!user || user.gender?.trim().toLowerCase() !== "male"))
+    return "Paternity leave is only available for male employees";
+  if (segment.leaveType === "Paternity" && (!user || user.employeeType !== "Confirmed"))
+    return "Paternity leave is only available for Confirmed employees";
+  if (segment.leaveType === "Paternity" && segment.dates.fromDuration === "full") {
+    const days = calculateLeaveDays(segment);
+    if (days !== 7) return "Paternity leave must be exactly 7 days";
+  }
+
+  if (segment.leaveType === "Leave Without Pay(LWP)" && leaveBalances.paidLeaves > 0 && user?.employeeType === "Confirmed") {
+    return "Leave Without Pay (LWP) is not allowed when Casual Leave balance is available";
+  }
+
+  if (
+    segment.dates.from === segment.dates.to &&
+    segment.dates.fromDuration === "half" &&
+    segment.dates.toDuration === "half" &&
+    segment.dates.fromSession === segment.dates.toSession
+  ) {
+   // return "Invalid duration combination for same-day leave";
+  }
+
+  return null;
+};
 
   const getTotalLeaveDays = () => {
     return leaveSegments.reduce((sum, segment) => sum + calculateLeaveDays(segment), 0);
@@ -473,7 +622,7 @@ const calculateLeaveDays = (segment) => {
 
   const validateFormData = (segments, commonFields) => {
     const errors = [];
-   if (!commonFields.reason) errors.push("Reason is required");
+    if (!commonFields.reason) errors.push("Reason is required");
     if (!commonFields.chargeGivenTo) errors.push("Charge Given To is required");
     if (!commonFields.emergencyContact) errors.push("Emergency Contact is required");
 
@@ -520,11 +669,11 @@ const calculateLeaveDays = (segment) => {
       formData.append(`segments[${index}][fullDay][from]`, segment.dates.from || "");
       formData.append(`segments[${index}][fullDay][fromDuration]`, segment.dates.fromDuration || "full");
       formData.append(`segments[${index}][fullDay][fromSession]`, segment.dates.fromSession || "");
-    if (segment.dates.to) {
-  formData.append(`segments[${index}][fullDay][to]`, segment.dates.to);
-  formData.append(`segments[${index}][fullDay][toDuration]`, segment.dates.toDuration || "full");
-  formData.append(`segments[${index}][fullDay][toSession]`, segment.dates.toSession || "");
-}
+      if (segment.dates.to) {
+        formData.append(`segments[${index}][fullDay][to]`, segment.dates.to);
+        formData.append(`segments[${index}][fullDay][toDuration]`, segment.dates.toDuration || "full");
+        formData.append(`segments[${index}][fullDay][toSession]`, segment.dates.toSession || "");
+      }
 
       formData.append(`segments[${index}][compensatoryEntryId]`, segment.compensatoryEntryId || "");
       formData.append(`segments[${index}][restrictedHoliday]`, segment.restrictedHoliday || "");
@@ -540,6 +689,14 @@ const calculateLeaveDays = (segment) => {
       });
       toast.success("Leave request submitted successfully");
       alert("Leave request submitted successfully");
+      const updatedBalances = await api.get("/dashboard/employee-info");
+      setLeaveBalances({
+        compensatoryAvailable: updatedBalances.data.compensatoryLeaves || 0,
+        paidLeaves: updatedBalances.data.paidLeaves || 0,
+        unpaidLeavesTaken: updatedBalances.data.unpaidLeavesTaken || 0,
+        medicalLeaves: updatedBalances.data.medicalLeaves || 0,
+        restrictedHolidays: updatedBalances.data.restrictedHolidays || 0,
+      });
       setLeaveSegments([
         {
           leaveType: "",
@@ -559,6 +716,7 @@ const calculateLeaveDays = (segment) => {
         },
       ]);
       setCommonFields({ reason: "", chargeGivenTo: "", emergencyContact: "" });
+      setIsFormFilled(false);
     } catch (error) {
       const errorMessage = error.response?.data?.message || "Failed to submit leave request";
       const segmentErrors = error.response?.data?.errors || [];
@@ -578,44 +736,74 @@ const calculateLeaveDays = (segment) => {
 
   const getMinDateForSegment = (index) => {
     if (index === 0) {
-      return new Date(leaveSegments[index].leaveType === "Medical" ? minDateMedical : minDate);
+      return new Date(leaveSegments[index].leaveType === "Medical" ? minDateMedical : istTime);
     }
     const lastSegment = leaveSegments[index - 1];
     if (lastSegment?.dates?.to) {
       let minDateSeg = new Date(lastSegment.dates.to);
-      do {
-        minDateSeg.setDate(minDateSeg.getDate() + 1);
-      } while (isHoliday(minDateSeg) && !isRestrictedHoliday(minDateSeg));
+      minDateSeg.setDate(minDateSeg.getDate() + 1);
       return minDateSeg;
     }
-    return new Date(minDate);
+    return new Date(istTime);
   };
 
-  const getMaxDateForToDate = (index) => {
+const getMaxDateForToDate = (index) => {
   const segment = leaveSegments[index];
   if (!segment.dates.from) return maxDateBase;
   const fromDate = new Date(segment.dates.from);
-  const totalLeaveDays = getTotalLeaveDays();
-  const daysUsedInSegment = calculateLeaveDays(segment);
-  const remainingDays = 3 - (totalLeaveDays - daysUsedInSegment);
+  
+  // Special cases for Medical, Maternity, and Paternity leaves
+  if (segment.leaveType === "Medical") {
+    let maxLimit = new Date(fromDate);
+    maxLimit.setDate(fromDate.getDate() + 6);
+    return maxLimit > maxDateBase ? maxDateBase : maxLimit;
+  } else if (segment.leaveType === "Maternity") {
+    let maxLimit = new Date(fromDate);
+    maxLimit.setDate(fromDate.getDate() + 89);
+    return maxLimit > maxDateBase ? maxDateBase : maxLimit;
+  } else if (segment.leaveType === "Paternity") {
+    let maxLimit = new Date(fromDate);
+    maxLimit.setDate(fromDate.getDate() + 6);
+    return maxLimit > maxDateBase ? maxDateBase : maxLimit;
+  }
 
-  let maxLimit = new Date(fromDate);
-  let daysCount = segment.dates.fromDuration === "half" ? 0.5 : 1; // Start with half or full day
-
-  while (daysCount < remainingDays) {
-    maxLimit.setDate(maxLimit.getDate() + 1);
-    if (!isHoliday(maxLimit) || isRestrictedHoliday(maxLimit)) {
-      daysCount += 1;
+  // Find the earliest From Date across all segments
+  let earliestFromDate = fromDate;
+  leaveSegments.forEach((seg, i) => {
+    if (seg.dates.from && i !== index) {
+      const segFromDate = new Date(seg.dates.from);
+      if (segFromDate < earliestFromDate) {
+        earliestFromDate = segFromDate;
+      }
     }
-  }
+  });
 
-  // Add one more day if remaining includes a half-day slot
-  if (remainingDays > daysCount && daysCount < 3) {
-    maxLimit.setDate(maxLimit.getDate() + 1);
-  }
+  // Calculate the maximum To Date to ensure total consecutive days do not exceed 3
+  let maxLimit = new Date(earliestFromDate);
+  let totalConsecutiveDays = getTotalConsecutiveDays();
+  let remainingDays = 3 - totalConsecutiveDays + (segment.dates.fromDuration === "half" ? 0.5 : 1);
 
+  // If the segment's From Date is after the earliest, adjust remaining days
+  const daysFromEarliest = Math.floor((fromDate - earliestFromDate) / (1000 * 60 * 60 * 24));
+  remainingDays = Math.max(0, 3 - daysFromEarliest - (segment.dates.fromDuration === "half" ? 0.5 : 1));
+
+  maxLimit.setDate(fromDate.getDate() + Math.floor(remainingDays));
   return maxLimit > maxDateBase ? maxDateBase : maxLimit;
 };
+  const isLastDayFullDisabled = (index) => {
+    const segment = leaveSegments[index];
+    if (!segment.dates.from || !segment.dates.to || segment.leaveType === "Medical" || segment.leaveType === "Maternity" || segment.leaveType === "Paternity") return false;
+    const totalConsecutiveDays = getTotalConsecutiveDays();
+    const fromDate = new Date(segment.dates.from);
+    const toDate = new Date(segment.dates.to);
+    
+    return (
+      segment.dates.fromDuration === "half" &&
+      segment.dates.fromSession === "afternoon" &&
+      totalConsecutiveDays >= 3 &&
+      toDate.toDateString() === getMaxDateForToDate(index).toDateString()
+    );
+  };
 
   const tileClassName = ({ date, view }) => {
     if (view === "month") {
@@ -664,18 +852,17 @@ const calculateLeaveDays = (segment) => {
         } else if (!maxDate || fromDate > maxDate) {
           maxDate = fromDate;
         }
-       if (segment.dates.from) {
-  const from = new Date(segment.dates.from);
-  const to = segment.dates.to ? new Date(segment.dates.to) : from;
-  const rawDiff = Math.floor((to - from) / (1000 * 60 * 60 * 24)) + 1;
+        if (segment.dates.from) {
+          const from = new Date(segment.dates.from);
+          const to = segment.dates.to ? new Date(segment.dates.to) : from;
+          const rawDiff = Math.round((to - from) / (1000 * 60 * 60 * 24)) + 1;
 
-  let adjustment = 0;
-  if (segment.dates.fromDuration === "half") adjustment -= 0.5;
-  if (segment.dates.toDuration === "half" && segment.dates.to) adjustment -= 0.5;
+          let adjustment = 0;
+          if (segment.dates.fromDuration === "half") adjustment -= 0.5;
+          if (segment.dates.toDuration === "half" && segment.dates.to) adjustment -= 0.5;
 
-  totalDays += rawDiff + adjustment;
-}
-
+          totalDays += rawDiff + adjustment;
+        }
       }
     });
 
@@ -690,46 +877,128 @@ const calculateLeaveDays = (segment) => {
     return leaveSegments.some((segment) => segment.leaveType === "Leave Without Pay(LWP)");
   };
 
-  const getLeaveTypes = (index) => {
-    const isConfirmed = user?.employeeType === "Confirmed";
-    const gender = user?.gender?.trim().toLowerCase();
-    const baseTypes = [
-      { value: "Casual", label: "Casual" },
-      { value: "Compensatory", label: "Compensatory" },
-      { value: "Leave Without Pay(LWP)", label: "Leave Without Pay (LWP)" },
-    ];
-    if (isConfirmed) {
-      if (gender === "female") {
-        baseTypes.push(
-          { value: "Medical", label: "Medical" },
-          { value: "Maternity", label: "Maternity" },
-          { value: "Restricted Holidays", label: "Restricted Holidays" }
-        );
-      } else if (gender === "male") {
-        baseTypes.push(
-          { value: "Medical", label: "Medical" },
-          { value: "Paternity", label: "Paternity" },
-          { value: "Restricted Holidays", label: "Restricted Holidays" }
-        );
-      } else {
-        baseTypes.push(
-          { value: "Medical", label: "Medical" },
-          { value: "Restricted Holidays", label: "Restricted Holidays" }
-        );
+const getLeaveTypes = (index) => {
+  const isConfirmed = user?.employeeType === "Confirmed";
+  const gender = user?.gender?.trim().toLowerCase();
+  const hasMedicalLeave = leaveSegments.some((seg) => seg.leaveType === "Medical");
+  const hasNonMedicalLeave = leaveSegments.some(
+    (seg) => seg.leaveType && seg.leaveType !== "Medical"
+  );
+  const rhTaken = leaveSegments.some(
+    (seg, i) => i !== index && seg.leaveType === "Restricted Holidays" && seg.restrictedHoliday
+  );
+  const rhAvailed = initialLeaveBalances?.restrictedHolidays === 0 && leaveBalances.restrictedHolidays === 0;
+  const hasCLSelected = leaveSegments.some(
+    (seg, i) => i !== index && seg.leaveType === "Casual"
+  );
+
+  const baseTypes = [
+    { value: "Casual", label: "Casual" },
+    { value: "Compensatory", label: "Compensatory" },
+    { value: "Leave Without Pay(LWP)", label: "Leave Without Pay (LWP)" },
+  ];
+
+  if (isConfirmed) {
+    if (gender === "female") {
+      if (!hasNonMedicalLeave) {
+        baseTypes.push({ value: "Medical", label: "Medical" });
+      }
+      if (!rhTaken && !rhAvailed) {
+        baseTypes.push({ value: "Restricted Holidays", label: "Restricted Holidays" });
+      }
+      baseTypes.push({ value: "Maternity", label: "Maternity" });
+    } else if (gender === "male") {
+      if (!hasNonMedicalLeave) {
+        baseTypes.push({ value: "Medical", label: "Medical" });
+      }
+      if (!rhTaken && !rhAvailed) {
+        baseTypes.push({ value: "Restricted Holidays", label: "Restricted Holidays" });
+      }
+      baseTypes.push({ value: "Paternity", label: "Paternity" });
+    } else {
+      if (!hasNonMedicalLeave) {
+        baseTypes.push({ value: "Medical", label: "Medical" });
+      }
+      if (!rhTaken && !rhAvailed) {
+        baseTypes.push({ value: "Restricted Holidays", label: "Restricted Holidays" });
       }
     }
-    return baseTypes.map((type) => ({
-      ...type,
-      disabled:
-        (index > 0 && leaveSegments[0].leaveType === "Casual" && type.value === "Casual") ||
-        (type.value === "Leave Without Pay(LWP)" && isLWPTaken() && leaveSegments[index].leaveType !== "Leave Without Pay(LWP)"),
-    }));
-  };
+  }
 
+  const clAlreadyTaken = leaveSegments.some(
+  (seg, i) => i < index && seg.leaveType === "Casual"
+);
+
+  return baseTypes.map((type) => {
+    const isNonConfirmed = !isConfirmed;
+    const clBalance = leaveBalances.paidLeaves;
+    const totalCLDays = getTotalCasualLeaveDays();
+
+    let disableCL = false;
+    let disableLWP = false;
+
+    if (isNonConfirmed) {
+      // Disable LWP if CL balance is 1 for non-confirmed employees
+      if (type.value === "Leave Without Pay(LWP)" && clBalance === 1) {
+        disableLWP = true;
+      }
+      // Disable CL in additional segments if CL is already selected
+      if (type.value === "Casual" && hasCLSelected) {
+        disableCL = true;
+      }
+      // Disable CL if total CL days is 1 or more
+      if (type.value === "Casual" && totalCLDays >= 1) {
+        disableCL = true;
+      }
+    }
+
+    if (index > 0) {
+      const prevSegment = leaveSegments[index - 1];
+      const prevToDate = prevSegment.dates.to ? new Date(prevSegment.dates.to) : new Date(prevSegment.dates.from);
+      const nextDay = new Date(prevToDate);
+      nextDay.setDate(nextDay.getDate() + 1);
+
+      const isAfterYH = yearlyHolidayDates.some((yh) => yh.toDateString() === prevToDate.toDateString()) &&
+                       !isHoliday(nextDay) && !isRestrictedHoliday(nextDay);
+
+      if (isAfterYH) {
+        if (type.value === "Casual" && clBalance > 0) {
+          disableCL = false;
+        } else if (type.value === "Leave Without Pay(LWP)" && clBalance === 0) {
+          disableLWP = false;
+        } else if (type.value === "Casual" && clBalance === 0) {
+          disableCL = true;
+        }
+      } else if (type.value === "Casual" && leaveSegments[0].leaveType === "Casual") {
+        disableCL = true;
+      }
+    }
+
+return {
+  ...type,
+  disabled: clAlreadyTaken
+    ? (
+        type.value === "Casual" || // Always disable CL
+        (type.value === "Compensatory" && leaveBalances.compensatoryAvailable === 0) // Keep comp balance check
+      )
+    : (
+        (type.value === "Leave Without Pay(LWP)" && clBalance > 0 && !isNonConfirmed) ||
+        (type.value === "Leave Without Pay(LWP)" && disableLWP) ||
+        (type.value === "Compensatory" && leaveBalances.compensatoryAvailable === 0) ||
+        (type.value === "Medical" && leaveBalances.medicalLeaves === 0) ||
+        (type.value === "Restricted Holidays" && (leaveBalances.restrictedHolidays === 0 || rhTaken || rhAvailed)) ||
+        (type.value === "Maternity" && leaveBalances.paidLeaves === 0) ||
+        (type.value === "Paternity" && leaveBalances.paidLeaves === 0) ||
+        (type.value === "Medical" && hasNonMedicalLeave)
+      )
+};
+
+  });
+};
   const getLeaveBalanceDisplay = () => {
     const isConfirmed = user?.employeeType === "Confirmed";
     const clTotal = isConfirmed ? 12 : 1;
-    const balanceCL = leaveBalances.paidLeaves;
+    const balanceCL = initialLeaveBalances?.paidLeaves || leaveBalances.paidLeaves;
     const availedCL = clTotal - balanceCL;
     const balances = [
       {
@@ -740,13 +1009,13 @@ const calculateLeaveDays = (segment) => {
       },
       {
         type: "Compensatory",
-        availed: leaveBalances.compensatoryAvailable / 8,
-        balance: leaveBalances.compensatoryAvailable / 8,
-        total: leaveBalances.compensatoryAvailable / 8,
+        availed: (initialLeaveBalances?.compensatoryAvailable || leaveBalances.compensatoryAvailable) / 8,
+        balance: (initialLeaveBalances?.compensatoryAvailable || leaveBalances.compensatoryAvailable) / 8,
+        total: (initialLeaveBalances?.compensatoryAvailable || leaveBalances.compensatoryAvailable) / 8,
       },
       {
         type: "Leave Without Pay (LWP)",
-        availed: leaveBalances.unpaidLeavesTaken,
+        availed: initialLeaveBalances?.unpaidLeavesTaken || leaveBalances.unpaidLeavesTaken,
         balance: "N/A",
         total: "N/A",
       },
@@ -755,14 +1024,14 @@ const calculateLeaveDays = (segment) => {
       balances.push(
         {
           type: "Medical Leave",
-          balance: leaveBalances.medicalLeaves,
-          availed: 7 - leaveBalances.medicalLeaves,
+          balance: initialLeaveBalances?.medicalLeaves || leaveBalances.medicalLeaves,
+          availed: 7 - (initialLeaveBalances?.medicalLeaves || leaveBalances.medicalLeaves),
           total: 7,
         },
         {
           type: "Restricted Holidays",
-          balance: leaveBalances.restrictedHolidays,
-          availed: 1 - leaveBalances.restrictedHolidays,
+          balance: initialLeaveBalances?.restrictedHolidays || leaveBalances.restrictedHolidays,
+          availed: 1 - (initialLeaveBalances?.restrictedHolidays || leaveBalances.restrictedHolidays),
           total: 1,
         }
       );
@@ -770,46 +1039,53 @@ const calculateLeaveDays = (segment) => {
     return balances;
   };
 
+  const isToDateDisabled = (segment) => {
+    if (!segment || !segment.dates) return false;
+    const { fromDuration, fromSession, from, to } = segment.dates;
+    return (
+      (fromDuration === "half" && fromSession === "forenoon" && from === to) ||
+      segment.isEmergency ||
+      segment.leaveType === "Medical" ||
+      segment.leaveType === "Maternity" ||
+      segment.leaveType === "Paternity" ||
+      segment.leaveType === "Restricted Holidays"
+    );
+  };
 
-const isToDateDisabled = (segment) => {
-  if (!segment || !segment.dates) return false;
-  const { fromDuration, fromSession, from, to } = segment.dates;
-  return fromDuration === "half" && fromSession === "forenoon";
-};
+  const isAddLeaveDisabled = () => {
+    const lastSegment = leaveSegments[leaveSegments.length - 1];
+    const fields = lastSegment?.dates || {};
 
-const isAddLeaveDisabled = () => {
-  const lastSegment = leaveSegments[leaveSegments.length - 1];
-  const fields = lastSegment?.dates || {};
+    const isFromDateForenoonHalfDay =
+      fields.fromDuration === "half" && fields.fromSession === "forenoon";
 
-  const isFromDateForenoonHalfDay =
-    fields.fromDuration === "half" && fields.fromSession === "forenoon";
+    const isIncomplete =
+      !lastSegment.leaveType ||
+      !fields.from ||
+      (fields.fromDuration === "half" && !fields.fromSession) ||
+      (fields.to && fields.toDuration === "half" && !fields.toSession);
 
-  const isIncomplete =
-    !lastSegment.leaveType ||
-    !fields.from ||
-    (fields.fromDuration === "half" && !fields.fromSession) ||
-    (fields.to && fields.toDuration === "half" && !fields.toSession);
+    const isLogicalBlock =
+      getTotalConsecutiveDays() >= 3 && 
+      lastSegment.leaveType !== "Medical" &&
+      lastSegment.leaveType !== "Maternity" &&
+      lastSegment.leaveType !== "Paternity";
 
-  const isLogicalBlock =
-    getTotalLeaveDays() >= 3 && lastSegment.leaveType !== "Medical";
+    const isToDateForenoonHalfDay =
+      fields.to &&
+      fields.toDuration === "half" &&
+      fields.toSession === "forenoon";
 
-  const isToDateForenoonHalfDay =
-    fields.to &&
-    fields.toDuration === "half" &&
-    fields.toSession === "forenoon";
-
-  return (
-    isIncomplete ||
-    isLogicalBlock ||
-    isToDateForenoonHalfDay ||
-    isFromDateForenoonHalfDay
-  );
-};
-
-
-
-
-
+    return (
+      isIncomplete ||
+      isLogicalBlock ||
+      isToDateForenoonHalfDay ||
+      isFromDateForenoonHalfDay ||
+      lastSegment.leaveType === "Medical" ||
+      lastSegment.leaveType === "Maternity" ||
+      lastSegment.leaveType === "Paternity"
+    );
+  };
 
   return (
     <ContentLayout title="Apply for Leave">
@@ -821,6 +1097,13 @@ const isAddLeaveDisabled = () => {
                 <li key={idx}>{error}</li>
               ))}
             </ul>
+          </div>
+        )}
+        {isAfter7AM && canApplyEmergencyLeave && (
+          <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-6">
+            <p>
+              Unplanned Leave applications are only accepted before 7:00 AM IST. Please contact your Head of Department for further assistance.
+            </p>
           </div>
         )}
         <div className="flex flex-col lg:flex-row gap-6">
@@ -863,12 +1146,13 @@ const isAddLeaveDisabled = () => {
                                 handleSegmentChange(index, { target: { name: "isEmergency", value } })
                               }
                               value={segment.isEmergency.toString()}
+                              disabled={isAfter7AM}
                             >
                               <SelectTrigger>
                                 <SelectValue placeholder="Select leave category" />
                               </SelectTrigger>
                               <SelectContent>
-                                <SelectItem value="true">Emergency Leave</SelectItem>
+                                <SelectItem value="true">Unplanned Leave</SelectItem>
                                 <SelectItem value="false">Regular Leave</SelectItem>
                               </SelectContent>
                             </Select>
@@ -895,152 +1179,170 @@ const isAddLeaveDisabled = () => {
                             </SelectContent>
                           </Select>
                         </div>
-                             {segment.leaveType === "Restricted Holidays" && (
-                          <div>
-                            <Label htmlFor={`restrictedHoliday-${index}`} className="text-blue-800">
-                              RH Reference
-                            </Label>
-                            <Select
-                            
-                              onValueChange={(value) => handleRestrictedHolidayChange(index, value)}
-                              value={segment.restrictedHoliday}
+                        {segment.leaveType === "Restricted Holidays" && (
+                          <div className="mt-2">
+                            <button
+                              type="button"
+                              onClick={() => setShowRHList((prev) => ({ ...prev, [index]: !prev[index] }))}
+                              className="border border-gray-300 px-2 py-2 rounded w-full text-left hover:bg-blue-50 transition"
                             >
-                              <SelectTrigger type="button" >
-                                <SelectValue placeholder="Select holiday" />
-                              </SelectTrigger>
-                           <SelectContent>
-  <SelectItem >Raksha Bandhan — 09/08/2025</SelectItem>
-  <SelectItem value="2025-08-16">Janmashtami — 16/08/2025</SelectItem>
-  <SelectItem value="2025-10-09">Karva Chauth — 09/10/2025</SelectItem>
-  <SelectItem value="2025-12-25">Christmas — 25/12/2025</SelectItem>
-</SelectContent>
-
-                            </Select>
+                              RH Reference
+                              {segment.restrictedHoliday
+                                ? RH_OPTIONS.find((rh) => rh.value === segment.restrictedHoliday)?.label
+                                : "Select RH Holiday"}
+                            </button>
+                            {showRHList?.[index] && (
+                              <ol className="mt-2 pl-5 list-decimal text-sm text-gray-800 space-y-1">
+                                {RH_OPTIONS.filter(
+                                  (rh) =>
+                                    !leaveSegments.some(
+                                      (seg, i) =>
+                                        i !== index &&
+                                        seg.leaveType === "Restricted Holidays" &&
+                                        seg.restrictedHoliday === rh.value
+                                    )
+                                ).map((rh) => (
+                                  <li
+                                    key={rh.value}
+                                    className={`cursor-pointer hover:text-blue-700 ${
+                                      segment.restrictedHoliday === rh.value ? "font-semibold text-blue-800" : ""
+                                    }`}
+                                    onClick={() => {
+                                      handleRestrictedHolidayChange(index, rh.value);
+                                      setShowRHList((prev) => ({ ...prev, [index]: false }));
+                                    }}
+                                  >
+                                    {rh.label}
+                                  </li>
+                                ))}
+                              </ol>
+                            )}
                           </div>
                         )}
-                    <div>
-  <Label htmlFor={`dates.from-${index}`} className="text-blue-800">From Date</Label>
-  <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
-    <Input
-      id={`dates.from-${index}`}
-      name="dates.from"
-      type="date"
-      value={segment.dates.from}
-      onChange={(e) => handleSegmentChange(index, e)}
-      min={
-        segment.leaveType === "Medical"
-          ? minDateMedical.toISOString().split("T")[0]
-          : minDate.toISOString().split("T")[0]
-      }
-      max={maxDateBase.toISOString().split("T")[0]}
-      disabled={segment.isEmergency || index > 0}
-      className="w-full sm:w-40"
-    />
-    {segment.leaveType !== "Restricted Holidays" && !segment.isEmergency && (
-      <div className="flex flex-col gap-2">
-        <div className="flex items-center gap-4">
-          <label className="flex items-center text-sm">
-            <input
-              type="radio"
-              name={`fromDuration-${index}`}
-              value="full"
-              checked={segment.dates.fromDuration === "full"}
-              onChange={(e) => handleSegmentChange(index, e)}
-              className="mr-2"
-            />
-            Full Day
-          </label>
-          <label className="flex items-center text-sm">
-            <input
-              type="radio"
-              name={`fromDuration-${index}`}
-              value="half"
-              checked={segment.dates.fromDuration === "half"}
-              onChange={(e) => handleSegmentChange(index, e)}
-              className="mr-2"
-            />
-            Half Day
-          </label>
-        </div>
-     {segment.dates.fromDuration === "half" && (
-  <div className="mt-2">
-    <select
-      name={`fromSession-${index}`}
-      value={segment.dates.fromSession}
-      onChange={(e) => handleSegmentChange(index, e)}
-      className="border rounded px-3 py-2 w-full sm:w-40 text-sm"
-    >
-      <option value="forenoon">Forenoon</option>
-      {/* Only allow 'afternoon' for the first leave segment */}
-      {index === 0 && <option value="afternoon">Afternoon</option>}
-    </select>
-  </div>
-)}
-
-      </div>
-    )}
-  </div>
-</div>
-
-{segment.leaveType !== "Restricted Holidays" && !segment.isEmergency && (
-  <div>
-    <Label htmlFor={`dates.to-${index}`} className="text-blue-800">To Date</Label>
-    <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
-      <Input
-        id={`dates.to-${index}`}
-        name="dates.to"
-        type="date"
-        value={segment.dates.to}
-        onChange={(e) => handleSegmentChange(index, e)}
-        min={segment.dates.from || minDate.toISOString().split("T")[0]}
-        max={getMaxDateForToDate(index).toISOString().split("T")[0]}
-        disabled={isToDateDisabled(segment)}
-        className="w-full sm:w-40"
-      />
-      {segment.dates.from !== segment.dates.to && segment.dates.to && (
-        <div className="flex flex-col gap-2">
-          <div className="flex items-center gap-4">
-            <label className="flex items-center text-sm">
-              <input
-                type="radio"
-                name={`toDuration-${index}`}
-                value="full"
-                checked={segment.dates.toDuration === "full"}
-                onChange={(e) => handleSegmentChange(index, e)}
-                className="mr-2"
-              />
-              Full Day
-            </label>
-            <label className="flex items-center text-sm">
-              <input
-                type="radio"
-                name={`toDuration-${index}`}
-                value="half"
-                checked={segment.dates.toDuration === "half"}
-                onChange={(e) => handleSegmentChange(index, e)}
-                className="mr-2"
-              />
-              Half Day
-            </label>
-          </div>
-         {segment.dates.toDuration === "half" && (
-  <div className="mt-2">
-    <select
-      name={`toSession-${index}`}
-      value={segment.dates.toSession}
-      onChange={(e) => handleSegmentChange(index, e)}
-      className="border rounded px-3 py-2 w-full sm:w-40 text-sm"
-    >
-      <option value="forenoon">Forenoon</option>
-    </select>
-  </div>
-)}
-
-        </div>
-      )}
-    </div>
-  </div>
-)}
+                        <div>
+                          <Label htmlFor={`dates.from-${index}`} className="text-blue-800">From Date</Label>
+                          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
+                            <Input
+                              id={`dates.from-${index}`}
+                              name="dates.from"
+                              type="date"
+                              value={segment.dates.from}
+                              onChange={(e) => handleSegmentChange(index, e)}
+                              min={
+                                segment.leaveType === "Medical"
+                                  ? minDateMedical.toISOString().split("T")[0]
+                                  : segment.isEmergency
+                                  ? istTime.toISOString().split("T")[0]
+                                  : istTime.toISOString().split("T")[0]
+                              }
+                              max={maxDateBase.toISOString().split("T")[0]}
+                              disabled={segment.isEmergency || index > 0}
+                              className="w-full sm:w-40"
+                            />
+                            {segment.leaveType !== "Restricted Holidays" && !segment.isEmergency && (
+                              <div className="flex flex-col gap-2">
+                                <div className="flex items-center gap-4">
+                                  <label className="flex items-center text-sm">
+                                    <input
+                                      type="radio"
+                                      name={`fromDuration-${index}`}
+                                      value="full"
+                                      checked={segment.dates.fromDuration === "full"}
+                                      onChange={(e) => handleSegmentChange(index, e)}
+                                      className="mr-2"
+                                      disabled={segment.leaveType === "Medical" || segment.leaveType === "Maternity" || segment.leaveType === "Paternity"}
+                                    />
+                                    Full Day
+                                  </label>
+                                  <label className="flex items-center text-sm">
+                                    <input
+                                      type="radio"
+                                      name={`fromDuration-${index}`}
+                                      value="half"
+                                      checked={segment.dates.fromDuration === "half"}
+                                      onChange={(e) => handleSegmentChange(index, e)}
+                                      className="mr-2"
+                                      disabled={segment.leaveType === "Medical" || segment.leaveType === "Maternity" || segment.leaveType === "Paternity"}
+                                    />
+                                    Half Day
+                                  </label>
+                                </div>
+                                {segment.dates.fromDuration === "half" && (
+                                  <div className="mt-2">
+                                    <select
+                                      name={`fromSession-${index}`}
+                                      value={segment.dates.fromSession}
+                                      onChange={(e) => handleSegmentChange(index, e)}
+                                      className="border rounded px-3 py-2 w-full sm:w-40 text-sm"
+                                    >
+                                      <option value="forenoon">Forenoon</option>
+                                     <option value="afternoon">Afternoon</option>
+                                    </select>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                        {segment.leaveType !== "Restricted Holidays" && !segment.isEmergency && (
+                          <div>
+                            <Label htmlFor={`dates.to-${index}`} className="text-blue-800">To Date</Label>
+                            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
+                              <Input
+                                id={`dates.to-${index}`}
+                                name="dates.to"
+                                type="date"
+                                value={segment.dates.to}
+                                onChange={(e) => handleSegmentChange(index, e)}
+                                min={segment.dates.from || istTime.toISOString().split("T")[0]}
+                                max={getMaxDateForToDate(index).toISOString().split("T")[0]}
+                                disabled={isToDateDisabled(segment)}
+                                className="w-full sm:w-40"
+                              />
+                              {segment.dates.from !== segment.dates.to && segment.dates.to && segment.leaveType !== "Medical" && segment.leaveType !== "Maternity" && segment.leaveType !== "Paternity" && (
+                                <div className="flex flex-col gap-2">
+                                  <div className="flex items-center gap-4">
+                                    <label className="flex items-center text-sm">
+                                      <input
+                                        type="radio"
+                                        name={`toDuration-${index}`}
+                                        value="full"
+                                        checked={segment.dates.toDuration === "full"}
+                                        onChange={(e) => handleSegmentChange(index, e)}
+                                        className="mr-2"
+                                        disabled={isLastDayFullDisabled(index)}
+                                      />
+                                      Full Day
+                                    </label>
+                                    <label className="flex items-center text-sm">
+                                      <input
+                                        type="radio"
+                                        name={`toDuration-${index}`}
+                                        value="half"
+                                        checked={segment.dates.toDuration === "half"}
+                                        onChange={(e) => handleSegmentChange(index, e)}
+                                        className="mr-2"
+                                      />
+                                      Half Day
+                                    </label>
+                                  </div>
+                                  {segment.dates.toDuration === "half" && (
+                                    <div className="mt-2">
+                                      <select
+                                        name={`toSession-${index}`}
+                                        value={segment.dates.toSession}
+                                        onChange={(e) => handleSegmentChange(index, e)}
+                                        className="border rounded px-3 py-2 w-full sm:w-40 text-sm"
+                                      >
+                                        <option value="forenoon">Forenoon</option>
+                                      </select>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
                         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
                           <div>
                             <Label className="text-blue-800">Leave Days</Label>
@@ -1059,9 +1361,9 @@ const isAddLeaveDisabled = () => {
                                       Error: Please select a valid Restricted Holiday date.
                                     </p>
                                   )}
-                                {getTotalLeaveDays() >= 3 && (
+                                {getTotalConsecutiveDays() > 3 && segment.leaveType !== "Medical" && segment.leaveType !== "Maternity" && segment.leaveType !== "Paternity" && (
                                   <p className="mt-1 text-sm text-red-600">
-                                    Note: Maximum of 3 leave days reached. Contact your HOD for additional leave approval.
+                                    Error: Cannot exceed 3 consecutive days, including Sundays and Yearly Holidays.
                                   </p>
                                 )}
                               </>
@@ -1128,7 +1430,6 @@ const isAddLeaveDisabled = () => {
                             </div>
                           </>
                         )}
-                   
                         {segment.leaveType === "Medical" && segment.dates.fromDuration === "full" && (
                           <div>
                             <Label htmlFor={`medicalCertificate-${index}`} className="text-blue-800">
@@ -1212,7 +1513,7 @@ const isAddLeaveDisabled = () => {
                   <div className="flex justify-end mt-4">
                     <Button
                       type="submit"
-                      disabled={submitting}
+                      disabled={submitting || (isAfter7AM && leaveSegments[0].isEmergency)}
                       className="bg-blue-600 hover:bg-blue-700 text-white text-sm"
                     >
                       {submitting ? "Submitting..." : "Submit All Leaves"}
@@ -1234,13 +1535,13 @@ const isAddLeaveDisabled = () => {
               <div className="max-h-96 overflow-y-auto pr-2 mb-6">
                 <ul className="text-sm space-y-2 text-gray-700">
                   <li>1. Plan leaves in advance for more than two consecutive days.</li>
-                  <li>2. Max 3 consecutive Casual Leaves (CL) allowed.</li>
+                  <li>2. Max 3 consecutive days allowed, including Sundays and Yearly Holidays.</li>
                   <li>3. One Restricted Holiday per year.</li>
                   <li>4. Extra leaves are counted as Leave Without Pay.</li>
                   <li>5. Compensatory leave requires HOD approval.</li>
                   <li>6. Leaves attached to Sundays/holidays need prior approval.</li>
                   <li>7. Seven Medical leaves per year, max 2 splits, certificate required for 3+ days.</li>
-                  <li>8. Emergency Leave only for the current day with HOD approval.</li>
+                  <li>8. Unplanned Leave only for the current day with HOD approval.</li>
                   <li>9. Leaves are not encashable.</li>
                   <li>10. No leaves during notice period.</li>
                   <li>11. Rejected leaves taken will lead to salary deduction.</li>
@@ -1252,14 +1553,14 @@ const isAddLeaveDisabled = () => {
             <div>
               <h4 className="text-md font-medium mb-2">Calendar</h4>
               <Calendar
-                minDate={minDate}
-                maxDate={maxDateBase}
-                tileDisabled={tileDisabled}
+               minDate={istTime}
+              // maxDate={maxDateBase}
+               // tileDisabled={tileDisabled}
                 tileClassName={tileClassName}
                 className="w-full"
               />
               <div className="mt-2 text-sm text-red-700">
-                Note: Leaves exceeding 3 days require separate HOD approval.
+                Note: Leaves exceeding 3 consecutive days, including Sundays/YH, require separate HOD approval.
               </div>
               <div className="mt-4 space-y-1 text-sm text-gray-700">
                 <p>
@@ -1325,4 +1626,3 @@ const isAddLeaveDisabled = () => {
 }
 
 export default LeaveForm;
-

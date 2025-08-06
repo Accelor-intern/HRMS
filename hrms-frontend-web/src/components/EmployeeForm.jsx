@@ -11,13 +11,7 @@ import ContentLayout from './ContentLayout';
 import * as XLSX from 'xlsx';
 
 const EXCEL_HEADERS = [
-  'employeeId', 'userId', 'name', 'dateOfBirth', 'fatherName', 'motherName',
-  'mobileNumber', 'permanentAddress', 'currentAddress', 'email', 'password',
-  'aadharNumber', 'bloodGroup', 'gender', 'maritalStatus', 'spouseName', 'emergencyContactName',
-  'emergencyContactNumber', 'dateOfJoining', 'reportingManager', 'status',
-  'dateOfResigning', 'employeeType', 'probationPeriod', 'confirmationDate', 'referredBy', 'loginType', 'designation',
-  'location', 'department', 'panNumber', 'pfNumber', 'uanNumber',
-  'esiNumber', 'paymentType', 'bankName', 'bankBranch', 'accountNumber', 'ifscCode'
+  'employeeId', 'userId', 'name', 'email', 'password', 'gender', 'designation', 'department'
 ];
 
 function EmployeeForm() {
@@ -99,7 +93,7 @@ function EmployeeForm() {
           api.get('/employees')
         ]);
         setDepartments(deptRes.data);
-        setManagers(empRes.data.filter(emp => ['HOD', 'Admin', 'CEO', 'CIO'].includes(emp.loginType))); //CIO can be removed or New login type with CIO can be created in future.
+        setManagers(empRes.data.filter(emp => ['HOD', 'Admin', 'CEO'].includes(emp.loginType)));
       } catch (err) {
         console.error('Error fetching data:', err);
       }
@@ -117,7 +111,10 @@ function EmployeeForm() {
 
   // Excel upload
   const handleExcelUpload = async () => {
-    if (!excelFile) return;
+    if (!excelFile) {
+      setErrors({ excel: 'Please select an Excel file' });
+      return;
+    }
     setExcelUploading(true);
     setExcelUploadResult(null);
     const formData = new FormData();
@@ -128,6 +125,9 @@ function EmployeeForm() {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
       setExcelUploadResult(response.data);
+      if (response.data.success && response.data.success.length > 0) {
+        alert(`${response.data.success.length} employees created successfully`);
+      }
     } catch (err) {
       setExcelUploadResult({ errors: [{ error: err.response?.data?.message || 'Upload failed' }] });
     } finally {
@@ -504,6 +504,7 @@ function EmployeeForm() {
                     <SelectItem value="Contractual">Contractual</SelectItem>
                     <SelectItem value="Apprentice">Apprentice</SelectItem>
                     <SelectItem value="OJT">OJT</SelectItem>
+                    <SelectItem value="OJT">Notice Period</SelectItem>
                   </SelectContent>
                 </Select>
                 {errors.employeeType && <p className="mt-1 text-sm text-red-500">{errors.employeeType}</p>}
@@ -610,7 +611,7 @@ function EmployeeForm() {
                   placeholder={`Enter ${field.label.toLowerCase()}`}
                   required
                 />
-                {errors[field.id] && <p className="mt-1 text-sm text-red-500">{errors.field.id}</p>}
+                {errors[field.id] && <p className="mt-1 text-sm text-red-500">{errors[field.id]}</p>}
               </motion.div>
             ))}
             <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.4, delay: 0.10 }}>
@@ -656,7 +657,7 @@ function EmployeeForm() {
                   pattern={field.pattern}
                   required={field.id === 'panNumber'}
                 />
-                {errors[field.id] && <p className="mt-1 text-sm text-red-500">{errors.field.id}</p>}
+                {errors[field.id] && <p className="mt-1 text-sm text-red-500">{errors[field.id]}</p>}
               </motion.div>
             ))}
           </div>
@@ -693,7 +694,7 @@ function EmployeeForm() {
                   className={errors[field.id] ? 'border-red-500' : ''}
                   required={field.id !== 'postgraduationDocs' && field.id !== 'experienceCertificate' && field.id !== 'salarySlips'}
                 />
-                {errors[field.id] && <p className="mt-1 text-sm text-red-500">{errors.field.id}</p>}
+                {errors[field.id] && <p className="mt-1 text-sm text-red-500">{errors[field.id]}</p>}
               </motion.div>
             ))}
             <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.4, delay: 0.50 }}>
@@ -751,7 +752,7 @@ function EmployeeForm() {
                       placeholder={`Enter ${field.label.toLowerCase()}`}
                       required
                     />
-                    {errors[field.id] && <p className="mt-1 text-sm text-red-500">{errors.field.id}</p>}
+                    {errors[field.id] && <p className="mt-1 text-sm text-red-500">{errors[field.id]}</p>}
                   </motion.div>
                 ))}
               </>
@@ -797,7 +798,7 @@ function EmployeeForm() {
         transition={{ duration: 0.5 }}
         className="w-full max-w-4xl mx-auto"
       >
-        <Card className=" shadow-lg border">
+        <Card className="shadow-lg border">
           <CardContent className="p-6">
             <div className="mb-6">
               <h2 className="text-xl font-semibold">
@@ -858,6 +859,7 @@ function EmployeeForm() {
                 )}
               </div>
             )}
+            {errors.excel && <p className="mt-1 text-sm text-red-500">{errors.excel}</p>}
             <form onSubmit={step === 5 ? handleSubmit : handleNext}>
               {renderStep()}
               {errors.submit && (

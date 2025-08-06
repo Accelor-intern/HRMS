@@ -157,7 +157,7 @@ router.get('/:id/documents', auth, ensureGfs, async (req, res) => {
 });
 
 // Get all employees (Admin and CEO only)
-router.get('/', auth, role(['Admin', 'CEO']), async (req, res) => {
+router.get('/', auth, role(['Admin', 'CEO','HOD','Employee']), async (req, res) => {
   try {
     const employees = await Employee.find().populate('department reportingManager');
     console.log('Fetching employees for role:', req.user.role);
@@ -1052,163 +1052,116 @@ router.patch('/:id/lock-section', auth, role(['Admin']), async (req, res) => {
 router.post('/upload-excel', auth, role(['Admin']), excelUpload.single('excel'), async (req, res) => {
   try {
     if (!req.file) {
-      return res.status(400).json({ message: 'No file uploaded.' });
+      return res.status(400).json({ message: 'No file uploaded' });
     }
-    const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
-    const sheet = workbook.Sheets[workbook.SheetNames[0]];
-    const rows = XLSX.utils.sheet_to_json(sheet);
 
-    const results = await Promise.all(
-      rows.map(async (row) => {
-        try {
-            // Format validations (only if field exists)
-          if (row.aadharNumber && !/^\d{12}$/.test(row.aadharNumber)) {
-            throw new Error('Aadhar Number must be exactly 12 digits');
-          }
-          if (row.mobileNumber && !/^\d{10}$/.test(row.mobileNumber)) {
-            throw new Error('Mobile Number must be exactly 10 digits');
-          }
-          if (row.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(row.email)) {
-            throw new Error('Invalid email format');
-          }
-          if (row.panNumber && !/^[A-Z0-9]{10}$/.test(row.panNumber)) {
-            throw new Error('PAN Number must be 10 alphanumeric characters');
-          }
-          if (row.pfNumber && !/^\d{18}$/.test(row.pfNumber)) {
-            throw new Error('PF Number must be 18 digits');
-          }
-          if (row.uanNumber && !/^\d{12}$/.test(row.uanNumber)) {
-            throw new Error('UAN Number must be 12 digits');
-          }
-          if (row.esiNumber && !/^\d{12}$/.test(row.esiNumber)) {
-            throw new Error('ESI Number must be 12 digits');
-          }
-          if (row.bloodGroup && !['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'].includes(row.bloodGroup)) {
-            throw new Error('Invalid blood group');
-          }
-          if (row.status === 'Resigned' && !row.dateOfResigning) {
-            throw new Error('Date of Resigning is required for Resigned status');
-          }
-          if (row.status === 'Working' && !row.employeeType) {
-            throw new Error('Employee Type is required for Working status');
-          }
-          if (row.status === 'Working' && row.employeeType === 'Probation' && (!row.probationPeriod || !row.confirmationDate)) {
-            throw new Error('Probation period and confirmation date are required for Probation employee type');
-          }
-          if (row.status === 'Working' && row.employeeType === 'OJT' && (!row.serviceAgreement || row.serviceAgreement.toString().trim() === '')) {
-            throw new Error('Service Agreement is required for OJT employee type');
-          }
-          if (isNaN(row.ctc) || Number(row.ctc) < 0) {
-            throw new Error('CTC must be a valid non-negative number');
-          }
-          if (isNaN(row.basic) || Number(row.basic) < 0) {
-            throw new Error('Basic must be a valid non-negative number');
-          }
-          if (isNaN(row.inHand) || Number(row.inHand) < 0) {
-            throw new Error('In Hand must be a valid non-negative number');
-          }
+    const workbook = XLSX.read(req.file.buffer, { type: 'buffer', cellDates: true });
+    const sheetName = workbook.SheetNames[0];
+    const sheet = workbook.Sheets[sheetName];
+    const jsonData = XLSX.utils.sheet_to_json(sheet);
 
-            // Department population if department is provided
-          let departmentId = null;
-          if (row.department) {
-            const dept = await Department.findOne({ name: row.department });
-            if (dept) {
-              if (!mongoose.Types.ObjectId.isValid(dept._id)) {
-                throw new Error(`Invalid department ID for department: ${row.department}`);
-              }
-              departmentId = dept._id;
-            }
+    if (!jsonData || jsonData.length === 0) {
+      return res.status(400).json({ message: 'Excel file is empty' });
+    }
+
+    const requiredFields = ['employeeId', 'userId', 'email', 'password', 'name', 'gender', 'designation', 'department'];
+    const validGenders = ['Male', 'Female', 'Other'];
+    const validLoginTypes = ['Employee', 'HOD', 'Admin', 'CEO'];
+    const validEmployeeTypes = ['Intern', 'Confirmed', 'Contractual', 'Probation', 'Apprentice', 'OJT', 'Notice Period'];
+
+    const departments = await Department.find({}, '_id name');
+    const departmentMap = new Map(departments.map(d => [d.name.toLowerCase(), d._id]));
+
+    const success = [];
+    const errors = [];
+
+    for (const [index, row] of jsonData.entries()) {
+      try {
+        // Validate required fields
+        for (const field of requiredFields) {
+          if (!row[field] || String(row[field]).trim() === '') {
+            throw new Error(`Missing required field: ${field}`);
           }
-
-            // Reporting Manager population if reportingManager is provided
-          let reportingManagerId = null;
-          if (row.reportingManager) {
-            const manager = await Employee.findOne({ employeeId: row.reportingManager });
-            if (manager) {
-              if (!mongoose.Types.ObjectId.isValid(manager._id)) {
-                throw new Error(`Invalid reporting manager ID for employeeId: ${row.reportingManager}`);
-              }
-              reportingManagerId = manager._id;
-            }
-          }
-
-            // Compose employee data (leave missing fields blank)
-          const employeeData = {
-            employeeId: row.employeeId || '',
-            userId: row.userId || '',
-            name: row.name || '',
-            dateOfBirth: parseExcelDate(row.dateOfBirth),
-            fatherName: row.fatherName || '',
-            motherName: row.motherName || '',
-            mobileNumber: row.mobileNumber || '',
-            permanentAddress: row.permanentAddress || '',
-            currentAddress: row.currentAddress || '',
-            email: row.email || '',
-            password: row.password || Math.random().toString(36).slice(-8),
-            aadharNumber: row.aadharNumber || '',
-            bloodGroup: row.bloodGroup || '',
-            gender: row.gender || '',
-            maritalStatus: row.maritalStatus || '',
-            spouseName: row.spouseName || '',
-            emergencyContactName: row.emergencyContactName || '',
-            emergencyContactNumber: row.emergencyContactNumber || '',
-            dateOfJoining: parseExcelDate(row.dateOfJoining),
-            dateOfResigning: row.status === 'Resigned' ? parseExcelDate(row.dateOfResigning) : null,
-            employeeType: row.status === 'Working' ? row.employeeType : null,
-            probationPeriod: row.status === 'Working' && row.employeeType === 'Probation' ? row.probationPeriod : null,
-            confirmationDate: row.status === 'Working' && row.employeeType === 'Probation' ? parseExcelDate(row.confirmationDate) : null,
-            reportingManager: reportingManagerId,
-            status: row.status || '',
-            referredBy: row.referredBy || '',
-            loginType: row.loginType || '',
-            designation: row.designation || '',
-            location: row.location || '',
-            department: departmentId,
-            panNumber: row.panNumber || '',
-            pfNumber: row.pfNumber || '',
-            uanNumber: row.uanNumber || '',
-            esiNumber: row.esiNumber || '',
-            paymentType: row.paymentType || '',
-            bankDetails: row.paymentType === 'Bank Transfer' ? {
-              bankName: row.bankName || '',
-              bankBranch: row.bankBranch || '',
-              accountNumber: row.accountNumber || '',
-              ifscCode: row.ifscCode || '',
-            } : null,
-            serviceAgreement: row.status === 'Working' && row.employeeType === 'OJT' ? Number(row.serviceAgreement) : null,
-            ctc: Number(row.ctc),
-            basic: Number(row.basic),
-            inHand: Number(row.inHand),
-              // Lock all sections except document upload (which stays locked)
-            locked: true,
-            basicInfoLocked: true,
-            positionLocked: true,
-            statutoryLocked: true,
-            documentsLocked: true,
-            paymentLocked: true,
-          };
-
-            // Remove empty bankDetails if paymentType is not 'Bank Transfer'
-          if (employeeData.paymentType !== 'Bank Transfer') {
-            delete employeeData.bankDetails;
-          }
-
-            // Save Employee
-          const employee = new Employee(employeeData);
-          await employee.save();
-          return { employeeId: employee.employeeId, _id: employee._id };
-        } catch (err) {
-          return { error: err.message, row };
         }
-      })
-    );
 
-    res.json({
-      success: results.filter(r => !r.error),
-      errors: results.filter(r => r.error)
+        // Validate unique fields
+        const existingEmployee = await Employee.findOne({
+          $or: [{ employeeId: row.employeeId }, { userId: row.userId }, { email: row.email }],
+        });
+        if (existingEmployee) {
+          throw new Error('Employee ID, User ID, or Email already exists');
+        }
+
+        // Validate email
+        if (!/^\S+@\S+\.\S+$/.test(row.email)) {
+          throw new Error('Invalid email format');
+        }
+
+        // Validate password
+        if (String(row.password).length < 6) {
+          throw new Error('Password must be at least 6 characters');
+        }
+
+        // Validate gender
+        if (!validGenders.includes(row.gender)) {
+          throw new Error(`Invalid gender: ${row.gender}. Must be one of ${validGenders.join(', ')}`);
+        }
+
+        // Convert department name to ID
+        const departmentName = String(row.department).trim().toLowerCase();
+        const departmentId = departmentMap.get(departmentName);
+        if (!departmentId) {
+          throw new Error(`Invalid department: ${row.department}`);
+        }
+
+        const employee = new Employee({
+          employeeId: row.employeeId,
+          userId: row.userId,
+          email: row.email,
+          password: row.password,
+          name: row.name,
+          gender: row.gender,
+          designation: row.designation,
+          department: departmentId,
+          status: 'Working', // Default value
+          employeeType: validEmployeeTypes.includes(row.employeeType) ? row.employeeType : 'Intern', // Default to Intern to avoid probation fields
+          loginType: validLoginTypes.includes(row.loginType) ? row.loginType : 'Employee', // Default to Employee if invalid
+          locked: true,
+          basicInfoLocked: true,
+          positionLocked: true,
+          statutoryLocked: true,
+          documentsLocked: true,
+          paymentLocked: true,
+          paidLeaves: 12,
+          unpaidLeavesTaken: 0,
+        });
+
+        const newEmployee = await employee.save();
+        success.push(newEmployee);
+
+        await Audit.create({
+          action: 'create_employee_excel',
+          user: req.user?.id || 'unknown',
+          details: `Created employee ${row.employeeId} via Excel upload`,
+        });
+      } catch (err) {
+        errors.push({ row: index + 2, error: err.message, data: row });
+      }
+    }
+
+    res.status(200).json({
+      success: success.map(emp => ({
+        employeeId: emp.employeeId,
+        name: emp.name,
+      })),
+      errors: errors.map(err => ({
+        row: err.row,
+        error: err.error,
+        data: err.data,
+      })),
     });
   } catch (err) {
-    console.error('Error processing Excel upload:', err.message);
+    console.error('Error processing Excel upload:', err);
     res.status(500).json({ message: 'Server error', error: err.message });
   }
 });

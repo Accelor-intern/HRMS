@@ -73,6 +73,7 @@ const attendanceSchema = new mongoose.Schema({
       'FN: Late Arrival (Denied) & AN: AWI',
       'FN: AWI & AN: Late Arrival (Allowed)',
       'FN: AWI & AN: Late Arrival (Denied)',
+      'FN: Present [LA: Deducted(Salary)] & AN: -',
       // Potential leave and OD combinations (if integrated later)
       'Leave (Approved) & FN: Present',
       'Leave (Approval Pending) & FN: Present',

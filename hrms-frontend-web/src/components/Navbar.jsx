@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useContext } from "react";
+import React, { useEffect, useRef, useContext, useState } from "react";
 import { motion } from "framer-motion";
 import { useNavigate, useLocation } from "react-router-dom";
 import { Menu, Transition } from "@headlessui/react";
@@ -13,8 +13,9 @@ function Navbar() {
   const navigate = useNavigate();
   const location = useLocation();
   const socketRef = useRef(null);
+  const [isHodMode, setIsHodMode] = useState(true); // Toggle state for HOD/User mode
 
-  // Define menu items with categorized Apply and Approve dropdowns for Admin and HOD
+  // Define menu items with categorized Apply and Approve dropdowns
   const menuItems = {
     Admin: [
       { text: "Admin Panel", path: "/admin/dashboard" },
@@ -27,10 +28,7 @@ function Navbar() {
           { text: "Acknowledge Leave", path: "/admin/approve-leave" },
           { text: "Acknowledge OD", path: "/admin/approve-od" },
           { text: "Acknowledge OT", path: "/admin/approve-ot" },
-          {
-            text: "Acknowledge Punch Missed",
-            path: "/admin/approve-punch-missed",
-          },
+          { text: "Acknowledge Punch Missed", path: "/admin/approve-punch-missed" },
         ],
       },
       { text: "Payroll Download", path: "/admin/payroll-download" },
@@ -46,52 +44,50 @@ function Navbar() {
       { text: "Approve Punch Missed", path: "/ceo/approve-punch-missed" },
     ],
     HOD: [
-      { text: "HoD Panel", path: "/hod/dashboard" },
-      { text: "My Workspace", path: "/hod/employee-dashboard" },
-                  {
-        text: "My Requests",
-        subItems: [
-          { text: "Applied Leave", path: "/hod/hod-my-leave-list" },
-          { text: "Applied OD", path: "/hod/hod-od-list" },
-           ...(user?.department?.name &&
-          ["Production", "Mechanical", "AMETL"].includes(
-            user.department.name
-          ) &&
-          user?.designation &&
-          ["Technician", "Sr. Technician", "Junior Engineer"].includes(
-            user.designation
-          )
-            ? [{ text: "Applied OT", path: "/employee/approve-ot" }]
-            : []),
-          { text: "Applied Punch Missed", path: "/employee/punch-missed-list" },
-        ],
-      },
-       {
-        text: "Submit Request",
-        subItems: [
-          { text: "Apply Leave", path: "/hod/leave" },
-          { text: "Apply OD", path: "/hod/od" },
-          { text: "Apply Punch Missed", path: "/hod/punch-missed" },
-        ],
-      },
-      
-      { text: "Employees", path: "/hod/employees" },
-      { text: "Shift Manager", path: "/hod/shift-management" },
-      { text: "Attendance", path: "/hod/attendance" },
-     
-
-      {
-        text: "Approvals",
-        subItems: [
-          { text: "Approve Leave", path: "/hod/approve-leave" },
-          { text: "Approve OD", path: "/hod/approve-od" },
-          ...(user?.department?.name &&
-          ["Production", "Mechanical", "AMETL"].includes(user.department.name)
-            ? [{ text: "Approve OT", path: "/hod/approve-ot" }]
-            : []),
-          { text: "Approve Punch Missed", path: "/hod/approve-punch-missed" },
-        ],
-      },
+      ...(isHodMode
+        ? [
+            { text: "HoD Panel", path: "/hod/dashboard" },
+            { text: "Employees", path: "/hod/employees" },
+            { text: "Shift Manager", path: "/hod/shift-management" },
+            { text: "Attendance", path: "/hod/attendance" },
+            {
+              text: "Approvals",
+              subItems: [
+                { text: "Approve Leave", path: "/hod/approve-leave" },
+                { text: "Approve OD", path: "/hod/approve-od" },
+                ...(user?.department?.name &&
+                ["Production", "Mechanical", "AMETL"].includes(user.department.name)
+                  ? [{ text: "Approve OT", path: "/hod/approve-ot" }]
+                  : []),
+                { text: "Approve Punch Missed", path: "/hod/approve-punch-missed" },
+              ],
+            },
+          ]
+        : [
+            { text: "My Workspace", path: "/hod/employee-dashboard" },
+            {
+              text: "My Requests",
+              subItems: [
+                { text: "Applied Leave", path: "/hod/hod-my-leave-list" },
+                { text: "Applied OD", path: "/hod/hod-od-list" },
+                ...(user?.department?.name &&
+                ["Production", "Mechanical", "AMETL"].includes(user.department.name) &&
+                user?.designation &&
+                ["Technician", "Sr. Technician", "Junior Engineer"].includes(user.designation)
+                  ? [{ text: "Applied OT", path: "/employee/approve-ot" }]
+                  : []),
+                { text: "Applied Punch Missed", path: "/employee/punch-missed-list" },
+              ],
+            },
+            {
+              text: "Submit Request",
+              subItems: [
+                { text: "Apply Leave", path: "/hod/leave" },
+                { text: "Apply OD", path: "/hod/od" },
+                { text: "Apply Punch Missed", path: "/hod/punch-missed" },
+              ],
+            },
+          ]),
     ],
     Employee: [
       { text: "My Workspace", path: "/employee/employee-dashboard" },
@@ -108,14 +104,10 @@ function Navbar() {
         subItems: [
           { text: "Applied Leave", path: "/employee/leave-list" },
           { text: "Applied OD", path: "/employee/od-list" },
-           ...(user?.department?.name &&
-          ["Production", "Mechanical", "AMETL"].includes(
-            user.department.name
-          ) &&
+          ...(user?.department?.name &&
+          ["Production", "Mechanical", "AMETL"].includes(user.department.name) &&
           user?.designation &&
-          ["Technician", "Sr. Technician", "Junior Engineer"].includes(
-            user.designation
-          )
+          ["Technician", "Sr. Technician", "Junior Engineer"].includes(user.designation)
             ? [{ text: "Applied OT", path: "/employee/approve-ot" }]
             : []),
           { text: "Applied Punch Missed", path: "/employee/punch-missed-list" },
@@ -146,6 +138,10 @@ function Navbar() {
   const handleLogout = () => {
     logout();
     navigate("/login");
+  };
+
+  const handleToggleMode = () => {
+    setIsHodMode((prev) => !prev);
   };
 
   useEffect(() => {
@@ -368,81 +364,119 @@ function Navbar() {
           )}
         </div>
 
-        <div className="flex items-center space-x-4">
-          <Notification />
+      <div className="flex items-center space-x-4">
+  <Notification />
+  {user?.loginType === "HOD" && (
+<div
+  className="flex items-center justify-between w-fit px-4 py-2 rounded-xl border border-gray-300 shadow-md relative overflow-hidden"
+  style={{
+    backgroundColor: '#fff',
+  }}
+>
+  {/* Soft background image on right */}
+  <div
+    className="absolute right-0 top-0 h-full w-24 opacity-50 pointer-events-none"
+    style={{
+     // backgroundImage: `url('https://www.shutterstock.com/image-vector/home-office-workspace-concept-blank-260nw-2310237331.jpg')`,
+      backgroundSize: 'cover',
+      backgroundPosition: 'center right',
+      backgroundRepeat: 'no-repeat',
+    }}
+  />
 
-          {user ? (
-            <Menu as="div" className="relative inline-block text-left">
-              <Menu.Button
-                as={motion.div}
-                whileHover={{ scale: 1.1 }}
-                className="w-10 h-10 rounded-full bg-primary flex items-center justify-center text-primary-foreground font-bold text-lg cursor-pointer shadow-md"
-                aria-label="Open user menu"
-              >
-                {userInitial}
-              </Menu.Button>
-              <Transition
-                as={React.Fragment}
-                enter="transition ease-out duration-100"
-                enterFrom="transform opacity-0 scale-95"
-                enterTo="transform opacity-100 scale-100"
-                leave="transition ease-in duration-75"
-                leaveFrom="transform opacity-100 scale-100"
-                leaveTo="transform opacity-0 scale-95"
-              >
-                <Menu.Items className="absolute right-0 mt-2 w-56 origin-top-right bg-popover rounded-lg shadow-xl p-2 z-50 border">
-                  <div className="px-4 py-2 border-b border-border">
-                    <p className="text-sm font-medium text-foreground">
-                      {user.name || "Guest"}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      {user.email || "No email"}
-                    </p>
-                  </div>
-                  {user.role !== "Admin" && (
-                    <Menu.Item>
-                      {({ active }) => (
-                        <div
-                          className={`px-4 py-2 text-sm text-foreground cursor-pointer transition-colors duration-200 ${
-                            active ? "bg-gray-200" : ""
-                          }`}
-                          onClick={() =>
-                            navigate(
-                              `/${user?.loginType.toLowerCase()}/profile`
-                            )
-                          }
-                          aria-label="View profile"
-                        >
-                          Profile
-                        </div>
-                      )}
-                    </Menu.Item>
-                  )}
-                  <Menu.Item>
-                    {({ active }) => (
-                      <div
-                        className={`px-4 py-2 text-sm text-foreground cursor-pointer transition-colors duration-200 ${
-                          active ? "bg-gray-200" : ""
-                        }`}
-                        onClick={handleLogout}
-                        aria-label="Logout"
-                      >
-                        Logout
-                      </div>
-                    )}
-                  </Menu.Item>
-                </Menu.Items>
-              </Transition>
-            </Menu>
-          ) : (
-            <span className="text-foreground font-medium">Guest</span>
+  <span
+    className={`text-base font-bold tracking-wide mr-4 z-10 ${
+      isHodMode ? 'text-gray-800' : 'text-gray-800'
+    }`}
+  >
+    {isHodMode ? 'HoD Mode' : 'User Mode'}
+  </span>
+
+  <button
+    onClick={handleToggleMode}
+    className={`relative w-14 h-7 rounded-full transition-colors duration-300 focus:outline-none border z-10 ${
+      isHodMode ? 'bg-gray-600' : 'bg-gray-600'
+    } border-gray-400`}
+  >
+    <motion.span
+      layout
+      transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+      className="absolute top-1 left-1 h-5 w-5 rounded-full bg-white shadow-sm"
+      animate={{ x: isHodMode ? 28 : 0 }}
+    />
+  </button>
+</div>
+
+
+  )}
+  {user ? (
+    <Menu as="div" className="relative inline-block text-left">
+      <Menu.Button
+        as={motion.div}
+        whileHover={{ scale: 1.1 }}
+        className="w-10 h-10 rounded-full bg-primary flex items-center justify-center text-primary-foreground font-bold text-lg cursor-pointer shadow-md"
+        aria-label="Open user menu"
+      >
+        {userInitial}
+      </Menu.Button>
+      <Transition
+        as={React.Fragment}
+        enter="transition ease-out duration-100"
+        enterFrom="transform opacity-0 scale-95"
+        enterTo="transform opacity-100 scale-100"
+        leave="transition ease-in duration-75"
+        leaveFrom="transform opacity-100 scale-100"
+        leaveTo="transform opacity-0 scale-95"
+      >
+        <Menu.Items className="absolute right-0 mt-2 w-56 origin-top-right bg-popover rounded-lg shadow-xl p-2 z-50 border">
+          <div className="px-4 py-2 border-b border-border">
+            <p className="text-sm font-medium text-foreground">
+              {user.name || "Guest"}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {user.email || "No email"}
+            </p>
+          </div>
+          {user.role !== "Admin" && (
+            <Menu.Item>
+              {({ active }) => (
+                <div
+                  className={`px-4 py-2 text-sm text-foreground cursor-pointer transition-colors duration-200 ${
+                    active ? "bg-gray-200" : ""
+                  }`}
+                  onClick={() =>
+                    navigate(`/${user?.loginType.toLowerCase()}/profile`)
+                  }
+                  aria-label="View profile"
+                >
+                  Profile
+                </div>
+              )}
+            </Menu.Item>
           )}
-        </div>
+          <Menu.Item>
+            {({ active }) => (
+              <div
+                className={`px-4 py-2 text-sm text-foreground cursor-pointer transition-colors duration-200 ${
+                  active ? "bg-gray-200" : ""
+                }`}
+                onClick={handleLogout}
+                aria-label="Logout"
+              >
+                Logout
+              </div>
+            )}
+          </Menu.Item>
+        </Menu.Items>
+      </Transition>
+    </Menu>
+  ) : (
+    <span className="text-foreground font-medium">Guest</span>
+  )}
+</div>
       </div>
     </motion.header>
   );
 }
 
 export default Navbar;
-
-

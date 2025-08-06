@@ -13,7 +13,9 @@ import RawESSLData from './models/RawESSLData.js';
 import Attendance from './models/Attendance.js';
 import { processPunchLogAttendance } from './utils/processAttendance.js';
 import { processLateArrivalStatus } from './utils/processAttendance.js';
-import { updateAWIStatus } from './utils/processAttendance.js';
+import { updateAttendanceWithShift } from './utils/processAttendance.js';
+import { updateAttendanceWithLeaves } from './utils/processAttendance.js';
+
 
 dotenv.config();
 
@@ -314,7 +316,7 @@ mongoose.connect(process.env.MONGO_URI)
         console.log('GridFS initialized successfully');
 
         // Schedule ESSL attendance sync
-        cron.schedule('0 35 09 * * *', async () => {
+        cron.schedule('0 09 09 * * *', async () => {
           console.log('Running ESSL attendance sync at', new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
           try {
             await syncESSLAttendance();
@@ -337,28 +339,57 @@ mongoose.connect(process.env.MONGO_URI)
     server.listen(PORT, () => console.log(`Server running on port ${PORT} with MongoDB error`));
   });
 
-  cron.schedule('43 09 * * *', async () => {
+  
+  cron.schedule('12 09 * * *', async () => {
           console.log('Running processPunchLogAttendance at 11:52 AM...');
           await processPunchLogAttendance();
           console.log('processPunchLogAttendance at 11:52 AM completed.');
         }, { timezone: 'Asia/Kolkata' });
 
 
-        cron.schedule('05 11 * * *', async () => {
+        cron.schedule('13 09 * * *', async () => {
           console.log('Running processLateArrivalStatus at 11:52 AM...');
           await processLateArrivalStatus();
           console.log('processLateArrivalStatus at 11:52 AM completed.');
         }, { timezone: 'Asia/Kolkata' });
 
+       
+        cron.schedule('14 09 * * *', async () => {
+          console.log('Running  updateAttendanceWithShift at 11:52 AM...');
+          await  updateAttendanceWithShift();
+          console.log(' updateAttendanceWithShift at 11:52 AM completed.');
+        }, { timezone: 'Asia/Kolkata' });
 
+        
 
-  cron.schedule('48 10 * * *', async () => {
-          console.log('Running updateAWIStatus at 11:52 AM...');
-          await updateAWIStatus();
-          console.log('updateAWIStatus at 11:52 AM completed.');
+         cron.schedule('21 09 * * *', async () => {
+          console.log('Running  updateAttendanceWithLeaves at 11:52 AM...');
+          await  updateAttendanceWithLeaves();
+          console.log(' updateAttendanceWithLeaves at 11:52 AM completed.');
         }, { timezone: 'Asia/Kolkata' });
 
 
+        // Example endpoint to fetch employees with birthdays today
+app.get('/api/employee-birthdays', async (req, res) => {
+  try {
+    const today = new Date().toISOString().split('T')[0]; // e.g., "2025-08-02"
+    const employees = await Employee.find({
+      dateOfBirth: {
+        $expr: { $eq: [{ $dayOfMonth: '$dateOfBirth' }, new Date(today).getDate()] },
+        $expr: { $eq: [{ $month: '$dateOfBirth' }, new Date(today).getMonth() + 1] },
+      },
+    }).select('name employeeId dateOfBirth');
+    res.json(employees.map(emp => ({
+      name: emp.name,
+      message: `🎂 Happy Birthday to ${emp.name}!`,
+    })));
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch birthdays' });
+  }
+});
+
+
+ 
 
 // Socket.io Events
 io.on('connection', socket => {

@@ -289,10 +289,7 @@ function LeaveList() {
           duration: leave.rejectedDates?.find(rd => rd.date === date)?.duration || 'full'
         }));
         if (rejectedDates.length > 0) {
-          if (!remarks.trim()) {
-            setError("Remarks are required when rejecting partial days.");
-            return;
-          }
+         
           leaveData.remarks = remarks;
         }
       } else if (validStatus === "Approved") {
@@ -706,7 +703,7 @@ function LeaveList() {
   return (
     <ContentLayout title="Leave List">
       <div className="bg-white min-h-screen">
-        <div className="mb-4 p-4 bg-blue-50 rounded-lg">
+        <div className="mb-4 p-4 bg-gray-100 rounded-lg">
           <h3 className="text-lg sm:text-xl font-medium mb-2 text-blue-800"><strong>Abbreviations</strong></h3>
           <div className="flex flex-wrap gap-4">
             {Object.entries(shortFormFlashcard).map(([short, full]) => (
@@ -1587,7 +1584,7 @@ function LeaveList() {
                                 {leave.status.hod === "Approved" && leave.status.ceo === "Approved" ? (
                                   <p className="text-green-600 text-sm">🎉 Hurray! Your Leave has been Approved ✅</p>
                                 ) : leave.status.hod === "Rejected" ||
-                                  leave.status.ceWords !== "Rejected" ||
+                                  leave.status.ceo !== "Rejected" ||
                                   leave.status.admin === "Rejected" ? (
                                   <p className="text-red-600 text-sm">😔 Sorry, Your Leave has been Rejected ❌</p>
                                 ) : (leave.status.hod === "Pending" ||
@@ -2304,7 +2301,7 @@ function LeaveList() {
                         <strong>Approved Days:</strong>{" "}
                         {formatDurationDisplay(confirmationData.days)}
                       </p>
-                      {confirmationData.approvedDates?.length > 0 && (
+                      {/* {confirmationData.approvedDates?.length > 0 && (
                         <p>
                           <strong>Approved Dates:</strong>{" "}
                           {confirmationData.approvedDates
@@ -2318,8 +2315,8 @@ function LeaveList() {
                           {confirmationData.rejectedDates
                             .map((date) => formatISTDate(date))
                             .join(", ") || "N/A"}
-                        </p>
-                      )}
+                        </p> */}
+                      
                     </div>
                   )}
                   <DialogFooter>
