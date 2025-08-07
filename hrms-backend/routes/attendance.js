@@ -74,7 +74,7 @@ const startOfDayUTC = new Date(Date.UTC(
   targetDateIST.getUTCMonth(),
   targetDateIST.getUTCDate()
 ));
-startOfDayUTC.setUTCHours(18, 30, 0, 0); // 6:30 PM IST yesterday in UTC
+startOfDayUTC.setUTCDate(startOfDayUTC.getUTCDate() - 1); startOfDayUTC.setUTCHours(13, 0, 0, 0); // 6:30 PM IST on 2025-08-06 in UTC // 6:30 PM IST yesterday in UTC
 
 const endOfDayUTC = new Date(Date.UTC(
   istTodayStart.getUTCFullYear(),
