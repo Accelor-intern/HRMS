@@ -81,7 +81,7 @@ const endOfDayUTC = new Date(Date.UTC(
   istTodayStart.getUTCMonth(),
   istTodayStart.getUTCDate()
 ));
-endOfDayUTC.setUTCDate(endOfDayUTC.getUTCDate() + 1); // Move to next day
+endOfDayUTC.setUTCDate(endOfDayUTC.getUTCDate()); // Move to next day
 endOfDayUTC.setUTCHours(0, 0, 0, 0); // 00:00 IST next day (in UTC)
 
 
