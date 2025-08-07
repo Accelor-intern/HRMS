@@ -65,6 +65,14 @@ function Navbar() {
           ]
         : [
             { text: "My Workspace", path: "/hod/employee-dashboard" },
+             {
+              text: "Submit Request",
+              subItems: [
+                { text: "Apply Leave", path: "/hod/leave" },
+                { text: "Apply OD", path: "/hod/od" },
+                { text: "Apply Punch Missed", path: "/hod/punch-missed" },
+              ],
+            },
             {
               text: "My Requests",
               subItems: [
@@ -79,14 +87,7 @@ function Navbar() {
                 { text: "Applied Punch Missed", path: "/employee/punch-missed-list" },
               ],
             },
-            {
-              text: "Submit Request",
-              subItems: [
-                { text: "Apply Leave", path: "/hod/leave" },
-                { text: "Apply OD", path: "/hod/od" },
-                { text: "Apply Punch Missed", path: "/hod/punch-missed" },
-              ],
-            },
+           
           ]),
     ],
     Employee: [

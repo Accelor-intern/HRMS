@@ -540,7 +540,7 @@ const canShowEmergencyToggle = (employee) => {
                     <TableHead>Name</TableHead>
                     <TableHead>Department</TableHead>
                     
-                    <TableHead>Emergency Leave Toggle</TableHead>
+                    <TableHead>Unplanned Leave Toggle</TableHead>
                     <TableHead>Actions</TableHead>
                   </TableRow>
                 </TableHeader>

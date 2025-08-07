@@ -134,15 +134,19 @@ router.post(
             if (toDuration === "half" && !toSession) {
               throw new Error("toSession is required for half-day toDuration");
             }
-            if (leaveStart.toISOString().split("T")[0] === leaveEnd.toISOString().split("T")[0]) {
-              if (fromDuration === "full" && toDuration === "full") {
-                leaveDays = 1;
-              } else if (fromDuration === "half" && toDuration === "half" && fromSession === "afternoon" && toSession === "forenoon") {
-                leaveDays = 0.5;
-              } else {
-                throw new Error("Invalid duration combination for same-day leave");
-              }
-            } else {
+          if (leaveStart.toISOString().split("T")[0] === leaveEnd.toISOString().split("T")[0]) {
+  if (fromDuration === "full" && toDuration === "full") {
+    leaveDays = 1;
+  } else if (fromDuration === "half" && toDuration === "half" && fromSession === "forenoon" && toSession === "forenoon") {
+    leaveDays = 0.5;
+  } else if (fromDuration === "half" && toDuration === "half" && fromSession === "afternoon" && toSession === "forenoon") {
+    leaveDays = 0.5;
+  } else if (fromDuration === "half" && !toDuration) {
+    leaveDays = 0.5; // Allow half-day start without toDuration for same day
+  } else {
+    throw new Error("Invalid duration combination for same-day leave");
+  }
+} else {
              const fixedHolidays = [
   new Date(2025, 0, 26),
   new Date(2025, 2, 14),

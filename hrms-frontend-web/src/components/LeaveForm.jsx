@@ -27,16 +27,24 @@ function LeaveForm() {
   const getSevenDaysAgo = () => getToday().subtract(7, "day");
   const getSevenDaysLater = (fromDate) => dayjs(fromDate).add(7, "day");
 
-  const istOffset = 5.5 * 60 * 60 * 1000;
-  const today = new Date();
-  const istTime = new Date(today.getTime() + istOffset);
-  istTime.setUTCHours(0, 0, 0, 0);
+ const istOffset = 5.5 * 60 * 60 * 1000;
+const today = new Date();
+const istTime = new Date(today.getTime() + istOffset);
+istTime.setUTCHours(0, 0, 0, 0);
 
-  const minDate = new Date(istTime);
-  const minDateMedical = new Date(istTime);
-  minDateMedical.setDate(minDateMedical.getDate() - 7);
-  const maxDateBase = new Date(istTime);
-  maxDateBase.setDate(istTime.getDate() + 60);
+const minDateBase = new Date(istTime); // Base minimum date (tomorrow for non-medical)
+minDateBase.setDate(minDateBase.getDate() + 1);
+
+const minDateMedical = new Date(istTime); // Minimum date for medical (7 days ago)
+minDateMedical.setDate(minDateMedical.getDate() + 1);
+
+const maxDateBase = new Date(istTime);
+maxDateBase.setDate(istTime.getDate() + 60);
+
+// Function to get dynamic minDate based on leaveType
+const getMinDate = (leaveType) => {
+  return leaveType === "Medical" ? minDateMedical.toISOString().split("T")[0] : minDateBase.toISOString().split("T")[0];
+};
 
   const [commonFields, setCommonFields] = useState({
     reason: "",
@@ -177,8 +185,24 @@ const handleSegmentChange = (index, e) => {
   const { name, value } = e.target;
   setLeaveSegments((prev) => {
     const newSegments = [...prev];
+if (name === "leaveType") {
+      newSegments[index] = {
+        ...newSegments[index],
+        [name]: value,
+        dates: {
+          ...newSegments[index].dates,
+          from: value === "Medical" && !newSegments[index].dates.from
+            ? minDateMedical.toISOString().split("T")[0]
+            : newSegments[index].dates.from,
+          to: value === "Medical" && !newSegments[index].dates.to
+            ? getSevenDaysLater(minDateMedical.toISOString().split("T")[0]).toISOString().split("T")[0]
+            : newSegments[index].dates.to,
+        },
+      };
+    }
+
     
-    if (name === `fromDuration-${index}`) {
+   else if (name === `fromDuration-${index}`) {
       newSegments[index] = {
         ...newSegments[index],
         dates: {
@@ -751,7 +775,7 @@ const getMaxDateForToDate = (index) => {
   const segment = leaveSegments[index];
   if (!segment.dates.from) return maxDateBase;
   const fromDate = new Date(segment.dates.from);
-  
+
   // Special cases for Medical, Maternity, and Paternity leaves
   if (segment.leaveType === "Medical") {
     let maxLimit = new Date(fromDate);
@@ -779,7 +803,7 @@ const getMaxDateForToDate = (index) => {
   });
 
   // Calculate the maximum To Date to ensure total consecutive days do not exceed 3
-  let maxLimit = new Date(earliestFromDate);
+  let maxLimit = new Date(fromDate);
   let totalConsecutiveDays = getTotalConsecutiveDays();
   let remainingDays = 3 - totalConsecutiveDays + (segment.dates.fromDuration === "half" ? 0.5 : 1);
 
@@ -787,9 +811,16 @@ const getMaxDateForToDate = (index) => {
   const daysFromEarliest = Math.floor((fromDate - earliestFromDate) / (1000 * 60 * 60 * 24));
   remainingDays = Math.max(0, 3 - daysFromEarliest - (segment.dates.fromDuration === "half" ? 0.5 : 1));
 
+  // Adjust for afternoon start to extend to the third day's forenoon
+  if (segment.dates.fromDuration === "half" && segment.dates.fromSession === "afternoon") {
+    remainingDays += 1; // Extend by one day to account for afternoon start
+  }
+
   maxLimit.setDate(fromDate.getDate() + Math.floor(remainingDays));
   return maxLimit > maxDateBase ? maxDateBase : maxLimit;
 };
+
+
   const isLastDayFullDisabled = (index) => {
     const segment = leaveSegments[index];
     if (!segment.dates.from || !segment.dates.to || segment.leaveType === "Medical" || segment.leaveType === "Maternity" || segment.leaveType === "Paternity") return false;
@@ -892,42 +923,45 @@ const getLeaveTypes = (index) => {
     (seg, i) => i !== index && seg.leaveType === "Casual"
   );
 
-  const baseTypes = [
+  // Base types array, excluding LWP if CL balance > 0 for confirmed employees
+  let baseTypes = [
     { value: "Casual", label: "Casual" },
     { value: "Compensatory", label: "Compensatory" },
-    { value: "Leave Without Pay(LWP)", label: "Leave Without Pay (LWP)" },
   ];
-
-  if (isConfirmed) {
-    if (gender === "female") {
-      if (!hasNonMedicalLeave) {
-        baseTypes.push({ value: "Medical", label: "Medical" });
-      }
-      if (!rhTaken && !rhAvailed) {
-        baseTypes.push({ value: "Restricted Holidays", label: "Restricted Holidays" });
-      }
-      baseTypes.push({ value: "Maternity", label: "Maternity" });
-    } else if (gender === "male") {
-      if (!hasNonMedicalLeave) {
-        baseTypes.push({ value: "Medical", label: "Medical" });
-      }
-      if (!rhTaken && !rhAvailed) {
-        baseTypes.push({ value: "Restricted Holidays", label: "Restricted Holidays" });
-      }
-      baseTypes.push({ value: "Paternity", label: "Paternity" });
-    } else {
-      if (!hasNonMedicalLeave) {
-        baseTypes.push({ value: "Medical", label: "Medical" });
-      }
-      if (!rhTaken && !rhAvailed) {
-        baseTypes.push({ value: "Restricted Holidays", label: "Restricted Holidays" });
-      }
-    }
+  if (!(isConfirmed && leaveBalances.paidLeaves > 0)) {
+    baseTypes.push({ value: "Leave Without Pay(LWP)", label: "Leave Without Pay (LWP)" });
   }
 
+if (isConfirmed) {
+  if (gender === "female" && user?.maritalStatus === "married") {
+    if (!hasNonMedicalLeave) {
+      baseTypes.push({ value: "Medical", label: "Medical" });
+    }
+    if (!rhTaken && !rhAvailed) {
+      baseTypes.push({ value: "Restricted Holidays", label: "Restricted Holidays" });
+    }
+    baseTypes.push({ value: "Maternity", label: "Maternity" });
+  } else if (gender === "male" && user?.maritalStatus === "married") {
+    if (!hasNonMedicalLeave) {
+      baseTypes.push({ value: "Medical", label: "Medical" });
+    }
+    if (!rhTaken && !rhAvailed) {
+      baseTypes.push({ value: "Restricted Holidays", label: "Restricted Holidays" });
+    }
+    baseTypes.push({ value: "Paternity", label: "Paternity" });
+  } else {
+    if (!hasNonMedicalLeave) {
+      baseTypes.push({ value: "Medical", label: "Medical" });
+    }
+    if (!rhTaken && !rhAvailed) {
+      baseTypes.push({ value: "Restricted Holidays", label: "Restricted Holidays" });
+    }
+  }
+}
+
   const clAlreadyTaken = leaveSegments.some(
-  (seg, i) => i < index && seg.leaveType === "Casual"
-);
+    (seg, i) => i < index && seg.leaveType === "Casual"
+  );
 
   return baseTypes.map((type) => {
     const isNonConfirmed = !isConfirmed;
@@ -938,15 +972,12 @@ const getLeaveTypes = (index) => {
     let disableLWP = false;
 
     if (isNonConfirmed) {
-      // Disable LWP if CL balance is 1 for non-confirmed employees
       if (type.value === "Leave Without Pay(LWP)" && clBalance === 1) {
         disableLWP = true;
       }
-      // Disable CL in additional segments if CL is already selected
       if (type.value === "Casual" && hasCLSelected) {
         disableCL = true;
       }
-      // Disable CL if total CL days is 1 or more
       if (type.value === "Casual" && totalCLDays >= 1) {
         disableCL = true;
       }
@@ -959,7 +990,7 @@ const getLeaveTypes = (index) => {
       nextDay.setDate(nextDay.getDate() + 1);
 
       const isAfterYH = yearlyHolidayDates.some((yh) => yh.toDateString() === prevToDate.toDateString()) &&
-                       !isHoliday(nextDay) && !isRestrictedHoliday(nextDay);
+                        !isHoliday(nextDay) && !isRestrictedHoliday(nextDay);
 
       if (isAfterYH) {
         if (type.value === "Casual" && clBalance > 0) {
@@ -974,25 +1005,24 @@ const getLeaveTypes = (index) => {
       }
     }
 
-return {
-  ...type,
-  disabled: clAlreadyTaken
-    ? (
-        type.value === "Casual" || // Always disable CL
-        (type.value === "Compensatory" && leaveBalances.compensatoryAvailable === 0) // Keep comp balance check
-      )
-    : (
-        (type.value === "Leave Without Pay(LWP)" && clBalance > 0 && !isNonConfirmed) ||
-        (type.value === "Leave Without Pay(LWP)" && disableLWP) ||
-        (type.value === "Compensatory" && leaveBalances.compensatoryAvailable === 0) ||
-        (type.value === "Medical" && leaveBalances.medicalLeaves === 0) ||
-        (type.value === "Restricted Holidays" && (leaveBalances.restrictedHolidays === 0 || rhTaken || rhAvailed)) ||
-        (type.value === "Maternity" && leaveBalances.paidLeaves === 0) ||
-        (type.value === "Paternity" && leaveBalances.paidLeaves === 0) ||
-        (type.value === "Medical" && hasNonMedicalLeave)
-      )
-};
-
+    return {
+      ...type,
+      disabled: clAlreadyTaken
+        ? (
+            type.value === "Casual" ||
+            (type.value === "Compensatory" && leaveBalances.compensatoryAvailable === 0)
+          )
+        : (
+            (type.value === "Compensatory" && leaveBalances.compensatoryAvailable === 0) ||
+            (type.value === "Medical" && leaveBalances.medicalLeaves === 0) ||
+            (type.value === "Restricted Holidays" && (leaveBalances.restrictedHolidays === 0 || rhTaken || rhAvailed)) ||
+            (type.value === "Maternity" && leaveBalances.paidLeaves === 0) ||
+            (type.value === "Paternity" && leaveBalances.paidLeaves === 0) ||
+            (type.value === "Medical" && hasNonMedicalLeave) ||
+            (type.value === "Casual" && disableCL) ||
+            (type.value === "Leave Without Pay(LWP)" && disableLWP)
+          )
+    };
   });
 };
   const getLeaveBalanceDisplay = () => {
@@ -1045,7 +1075,7 @@ return {
     return (
       (fromDuration === "half" && fromSession === "forenoon" && from === to) ||
       segment.isEmergency ||
-      segment.leaveType === "Medical" ||
+      //segment.leaveType === "Medical" ||
       segment.leaveType === "Maternity" ||
       segment.leaveType === "Paternity" ||
       segment.leaveType === "Restricted Holidays"
@@ -1222,23 +1252,17 @@ return {
                         <div>
                           <Label htmlFor={`dates.from-${index}`} className="text-blue-800">From Date</Label>
                           <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
-                            <Input
-                              id={`dates.from-${index}`}
-                              name="dates.from"
-                              type="date"
-                              value={segment.dates.from}
-                              onChange={(e) => handleSegmentChange(index, e)}
-                              min={
-                                segment.leaveType === "Medical"
-                                  ? minDateMedical.toISOString().split("T")[0]
-                                  : segment.isEmergency
-                                  ? istTime.toISOString().split("T")[0]
-                                  : istTime.toISOString().split("T")[0]
-                              }
-                              max={maxDateBase.toISOString().split("T")[0]}
-                              disabled={segment.isEmergency || index > 0}
-                              className="w-full sm:w-40"
-                            />
+                           <Input
+  id={`dates.from-${index}`}
+  name="dates.from"
+  type="date"
+  value={segment.dates.from}
+  onChange={(e) => handleSegmentChange(index, e)}
+  min={getMinDate(segment.leaveType)} // Dynamic min date based on leaveType
+  max={maxDateBase.toISOString().split("T")[0]}
+  disabled={segment.isEmergency || index > 0}
+  className="w-full sm:w-40"
+/>
                             {segment.leaveType !== "Restricted Holidays" && !segment.isEmergency && (
                               <div className="flex flex-col gap-2">
                                 <div className="flex items-center gap-4">
@@ -1288,17 +1312,17 @@ return {
                           <div>
                             <Label htmlFor={`dates.to-${index}`} className="text-blue-800">To Date</Label>
                             <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
-                              <Input
-                                id={`dates.to-${index}`}
-                                name="dates.to"
-                                type="date"
-                                value={segment.dates.to}
-                                onChange={(e) => handleSegmentChange(index, e)}
-                                min={segment.dates.from || istTime.toISOString().split("T")[0]}
-                                max={getMaxDateForToDate(index).toISOString().split("T")[0]}
-                                disabled={isToDateDisabled(segment)}
-                                className="w-full sm:w-40"
-                              />
+                             <Input
+  id={`dates.to-${index}`}
+  name="dates.to"
+  type="date"
+  value={segment.dates.to}
+  onChange={(e) => handleSegmentChange(index, e)}
+  min={segment.dates.from || istTime.toISOString().split("T")[0]}
+  max={getMaxDateForToDate(index).toISOString().split("T")[0]}
+  disabled={isToDateDisabled(segment)}
+  className="w-full sm:w-40"
+/>
                               {segment.dates.from !== segment.dates.to && segment.dates.to && segment.leaveType !== "Medical" && segment.leaveType !== "Maternity" && segment.leaveType !== "Paternity" && (
                                 <div className="flex flex-col gap-2">
                                   <div className="flex items-center gap-4">
