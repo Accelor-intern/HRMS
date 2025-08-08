@@ -15,7 +15,6 @@ router.get('/', auth, async (req, res) => {
   try {
     let filter = {};
 
-
     // Apply role-based restrictions
     if (req.user.loginType === 'Employee') {
       filter = { employeeId: req.user.employeeId };
@@ -58,72 +57,45 @@ router.get('/', auth, async (req, res) => {
 
     // Apply name filter if provided
     if (req.query.name) {
-      filter.name = { $regex: new RegExp(req.query.name, 'i') }; // Case-insensitive search
+      filter.name = { $regex: new RegExp(req.query.name, 'i') };
     }
 
-   // Apply fixed IST date filter: from yesterday 6:30 PM IST to today 12:00 AM IST
-const istNow = new Date();
-const istTodayStart = new Date(istNow);
-istTodayStart.setHours(0, 0, 0, 0); // today 00:00 IST
-
-const targetDateIST = new Date(istTodayStart);
-targetDateIST.setDate(istTodayStart.getDate() ); // yesterday
-
-const startOfDayUTC = new Date(Date.UTC(
-  targetDateIST.getUTCFullYear(),
-  targetDateIST.getUTCMonth(),
-  targetDateIST.getUTCDate()
-));
-startOfDayUTC.setUTCDate(startOfDayUTC.getUTCDate() - 1); startOfDayUTC.setUTCHours(13, 0, 0, 0); // 6:30 PM IST on 2025-08-06 in UTC // 6:30 PM IST yesterday in UTC
-
-const endOfDayUTC = new Date(Date.UTC(
-  istTodayStart.getUTCFullYear(),
-  istTodayStart.getUTCMonth(),
-  istTodayStart.getUTCDate()
-));
-endOfDayUTC.setUTCDate(endOfDayUTC.getUTCDate()); // Move to next day
-endOfDayUTC.setUTCHours(0, 0, 0, 0); // 00:00 IST next day (in UTC)
-
-
-filter.logDate = { $gte: startOfDayUTC, $lte: endOfDayUTC };
+    // Apply custom date range filter from frontend
+    if (req.query.fromDate) {
+      const fromDate = new Date(req.query.fromDate);
+      if (isNaN(fromDate)) {
+        return res.status(400).json({ message: 'Invalid fromDate format' });
+      }
+      // Convert to UTC equivalent of IST start of day
+      const fromDateUTC = new Date(fromDate.getTime() - (5.5 * 60 * 60 * 1000));
+      fromDateUTC.setUTCHours(0, 0, 0, 0);
+      filter.logDate = { $gte: fromDateUTC };
+    }
+    if (req.query.toDate) {
+      const toDate = new Date(req.query.toDate);
+      if (isNaN(toDate)) {
+        return res.status(400).json({ message: 'Invalid toDate format' });
+      }
+      // Convert to UTC equivalent of IST end of day
+      const toDateUTC = new Date(toDate.getTime() - (5.5 * 60 * 60 * 1000));
+      toDateUTC.setUTCHours(23, 59, 59, 999);
+      filter.logDate = filter.logDate ? { ...filter.logDate, $lte: toDateUTC } : { $lte: toDateUTC };
+    }
 
     // Apply status filter
     if (req.query.status && req.query.status !== 'all') {
       filter.status = req.query.status;
     }
+
     console.log('Final filter being used:', JSON.stringify(filter, null, 2));
     console.log('Status filter value:', req.query.status);
     console.log('Date range:', {
       fromDate: req.query.fromDate,
       toDate: req.query.toDate || req.query.fromDate
     });
-    // Debug query to check what status values exist
-    const matchStage = {
-      logDate: { $gte: filter.logDate.$gte, $lte: filter.logDate.$lte }
-    };
 
-    // Handle both string and array employeeId cases
-    if (filter.employeeId?.$in) {
-      matchStage.employeeId = { $in: filter.employeeId.$in };
-    } else if (filter.employeeId) {
-      matchStage.employeeId = filter.employeeId;
-    }
-
-    const statusCounts = await Attendance.aggregate([
-      { $match: matchStage },
-      {
-        $group: {
-          _id: "$status",
-          count: { $sum: 1 },
-          dates: { $push: { date: "$logDate", employeeId: "$employeeId" } }
-        }
-      }
-    ]);
-    
- 
     const attendance = await Attendance.find(filter).lean();
 
-    
     // Log duplicates for debugging
     const keyCounts = {};
     attendance.forEach((record) => {
