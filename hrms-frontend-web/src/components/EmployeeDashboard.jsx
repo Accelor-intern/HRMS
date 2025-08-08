@@ -279,7 +279,7 @@ function EmployeeDashboard() {
           )}
         </div>
 
-       {/* <div className="w-full max-w-[1200px] bg-gradient-to-r from-blue-50 to-blue-100 p-6 rounded-lg mb-6 text-center shadow-lg relative">
+       <div className="w-full max-w-[1200px] bg-gradient-to-r from-blue-50 to-blue-100 p-6 rounded-lg mb-6 text-center shadow-lg relative">
            {data.birthdayMessage && (
             <p className="text-xl text-blue-600 font-semibold mt-2">{data.birthdayMessage}</p>
           )}
@@ -296,7 +296,7 @@ function EmployeeDashboard() {
               </p>
             </div>
           )}
-      </div> */}
+      </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6 justify-items-center w-full max-w-[1200px] mb-8">
           {/* Casual Leave */}
