@@ -224,7 +224,7 @@ function EmployeeDashboard() {
     const istOffsetMs = 5.5 * 60 * 60 * 1000;
     const today = new Date(now.getTime() + istOffsetMs);
     const hour = today.getHours();
-    setGreeting(hour < 12 ? 'Good Morning' : hour < 17 ? 'Good Afternoon' : 'Good Evening');
+    setGreeting(hour < 12 ? 'Good Morning' : hour < 17 ? 'Good Evening' : 'Good Afternoon');
 
     const quotes = [
       'Fall in love with the process ❤️‍🔥✨',
